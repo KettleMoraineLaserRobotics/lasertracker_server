@@ -3,7 +3,6 @@ package internal
 import "time"
 
 type Group struct {
-	ID         int
 	GroupName  string
 	EventKey   string
 	TeamNumber int
@@ -11,8 +10,7 @@ type Group struct {
 }
 
 type Member struct {
-	ID          int
-	GroupID     int
+	GroupKey    string
 	Username    string
 	DisplayName string
 	PinHash     string
@@ -23,14 +21,14 @@ type Member struct {
 }
 
 type LogEntry struct {
-	GroupID   int
+	GroupKey  string
 	Username  string
 	Action    string
 	Timestamp time.Time
 }
 
 type Battery struct {
-	GroupID     int
+	GroupKey    string
 	Name        string
 	Status      string
 	MatchesUsed int
