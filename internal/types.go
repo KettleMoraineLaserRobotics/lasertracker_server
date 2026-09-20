@@ -1,6 +1,16 @@
 package internal
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
+
+type WSMessage struct {
+	GroupKey  string
+	Timestamp time.Time
+	InfoType  string
+	Payload   json.RawMessage
+}
 
 type Group struct {
 	GroupName  string

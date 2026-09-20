@@ -83,6 +83,7 @@ func removeGroup(ctx context.Context, conn *pgxpool.Pool, groupKey string) error
 
 func addMember(ctx context.Context, conn *pgxpool.Pool, memberInfo internal.Member) error {
 	adminInt := 0
+	username := memberInfo.Username + "-" + memberInfo.GroupKey // Instead of member id numbers we have name-groupkey! Keeps unique users and removes an unecessary thing
 	if memberInfo.IsAdmin {
 		adminInt = 1
 	}
@@ -90,7 +91,7 @@ func addMember(ctx context.Context, conn *pgxpool.Pool, memberInfo internal.Memb
 	query := `INSERT INTO members (group_key, username, display_name, pin_hash, job, role, location, is_admin) 
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
-	_, err := conn.Exec(ctx, query, memberInfo.GroupKey, memberInfo.Username, memberInfo.DisplayName, memberInfo.PinHash, memberInfo.Job, memberInfo.Role, memberInfo.Location, adminInt)
+	_, err := conn.Exec(ctx, query, memberInfo.GroupKey, username, memberInfo.DisplayName, memberInfo.PinHash, memberInfo.Job, memberInfo.Role, memberInfo.Location, adminInt)
 	return err
 }
 
@@ -159,9 +160,9 @@ func addLogEntry(ctx context.Context, conn *pgxpool.Pool, entry internal.LogEntr
 	query := `INSERT INTO logs (group_key, username, action, timestamp) VALUES ($1, $2, $3, $4)`
 
 	_, err := conn.Exec(ctx, query, entry.GroupKey, entry.Username, entry.Action, entry.Timestamp)
-	if err != nil {
-		return fmt.Errorf("failed to insert log entry: %w", err)
-	}
 
-	return nil
+	if err != nil {
+		return fmt.Errorf("failed to add log entry: %w", err)
+	}
+	return err
 }
