@@ -27,6 +27,7 @@ type Member struct {
 	Username    string
 	DisplayName string
 	PinHash     string
+	TokenVer    int
 	Job         string
 	Role        string
 	Location    string

@@ -8,15 +8,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func HashPass(password string) (string, error) {
-	hashword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+func HashPin(pin string) string {
+	hashword, err := bcrypt.GenerateFromPassword([]byte(pin), bcrypt.DefaultCost)
 	if err != nil {
 		fmt.Println(err)
 	}
-	return string(hashword), err
+	return string(hashword)
 }
 
-func CheckPassword(hashed string, unhashed string) bool {
+func CheckPin(hashed string, unhashed string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hashed), []byte(unhashed))
 	return err == nil
 }

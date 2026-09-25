@@ -7,9 +7,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-type Config struct {
+type config struct {
 	InstanceName string
 	Version      string
 	DatabaseURL  string
@@ -18,7 +19,7 @@ type Config struct {
 	JWTSecret    string
 }
 
-func LoadConfig() (*Config, error) {
+func loadConfig() *config {
 	instName := os.Getenv("LT_INSTANCE_NAME")
 	ver := os.Getenv("LT_VERSTION")
 	dbUrl := os.Getenv("LT_DATABASE_URL")
@@ -35,7 +36,7 @@ func LoadConfig() (*Config, error) {
 		jwt = secret
 	}
 
-	var cfg Config
+	var cfg config
 	cfg.InstanceName = instName
 	cfg.Version = ver
 	cfg.DatabaseURL = dbUrl
@@ -43,7 +44,23 @@ func LoadConfig() (*Config, error) {
 	cfg.TBAAPIKey = tba
 	cfg.JWTSecret = jwt
 
-	return &cfg, nil
+	return &cfg
+}
+
+var lock = &sync.Mutex{}
+
+var cfgInstance *config
+
+func GetConfig() *config {
+	if cfgInstance == nil {
+		lock.Lock()
+		defer lock.Unlock()
+		if cfgInstance == nil {
+			cfgInstance = loadConfig()
+		}
+	}
+
+	return cfgInstance
 }
 
 func GenerateRandomSecret(length int) (string, error) {

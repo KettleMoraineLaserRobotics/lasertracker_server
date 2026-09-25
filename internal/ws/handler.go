@@ -11,7 +11,7 @@ import (
 func ServeWS(hub *Hub, jwtSecret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.URL.Query().Get("token")
-		claims, err := auth.ValidateToken(tokenStr, jwtSecret)
+		claims, err := auth.ValidateToken(tokenStr, r.Context())
 		if err != nil {
 			http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
 			return
