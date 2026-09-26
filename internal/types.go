@@ -61,4 +61,10 @@ type Match struct {
 	MatchKey  string
 	EventKey  string
 	Timestamp time.Time
+	Played    bool
+}
+
+type Stream struct {
+	Name string
+	URL  string
 }

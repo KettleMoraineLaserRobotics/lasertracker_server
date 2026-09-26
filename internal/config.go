@@ -17,6 +17,7 @@ type config struct {
 	Port         int
 	TBAAPIKey    string
 	JWTSecret    string
+	IsTesting    bool
 }
 
 func loadConfig() *config {
@@ -24,7 +25,12 @@ func loadConfig() *config {
 	ver := os.Getenv("LT_VERSTION")
 	dbUrl := os.Getenv("LT_DATABASE_URL")
 	port, _ := strconv.Atoi(os.Getenv("LT_PORT"))
-	tba := os.Getenv(" LT_TBA_API_KEY")
+	tba := os.Getenv("LT_TBA_API_KEY")
+	testingStr := os.Getenv("LT_IS_TESTING")
+	testingBool := false
+	if testingStr == "true" {
+		testingBool = true
+	}
 	jwt := "Hi, I am a secret. My background consists of letters and numbers."
 	if _, err := os.Stat(".secret"); err == nil {
 		secretBytes, readErr := os.ReadFile(".secret")
@@ -43,6 +49,7 @@ func loadConfig() *config {
 	cfg.Port = port
 	cfg.TBAAPIKey = tba
 	cfg.JWTSecret = jwt
+	cfg.IsTesting = testingBool
 
 	return &cfg
 }
