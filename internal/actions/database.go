@@ -59,6 +59,7 @@ func CreateTables() error {
         group_name TEXT NOT NULL,
         event_key TEXT NOT NULL,
         team_number INTEGER,
+		avatar_image TEXT,
         group_key TEXT PRIMARY KEY
     );
 
@@ -109,9 +110,14 @@ func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string)
 		}
 	}
 
-	groupCreatinator := `INSERT INTO groups (group_name, event_key, team_number, group_key) VALUES ($1, $2, $3, $4)`
+	groupCreatinator := `INSERT INTO groups (group_name, event_key, team_number, avatar_image, group_key) VALUES ($1, $2, $3, $4)`
 
-	_, gcerr := dbConnection.Exec(ctx, groupCreatinator, groupInfo.GroupName, groupInfo.EventKey, groupInfo.TeamNumber, groupKey)
+	avatar, avatarerr := teamAvatar(groupInfo.TeamNumber)
+	if avatarerr != nil {
+		avatar = "none"
+	}
+
+	_, gcerr := dbConnection.Exec(ctx, groupCreatinator, groupInfo.GroupName, groupInfo.EventKey, groupInfo.TeamNumber, avatar, groupKey)
 	return handleError(gcerr)
 }
 
@@ -248,11 +254,11 @@ func AddLogEntry(ctx context.Context, entry internal.LogEntry) error {
 }
 
 func GetGroup(ctx context.Context, groupKey string) (*internal.Group, error) {
-	query := `SELECT group_name, event_key, team_number, group_key FROM groups WHERE group_key = $1`
+	query := `SELECT group_name, event_key, team_number, avatar_image, group_key FROM groups WHERE group_key = $1`
 	row := dbConnection.QueryRow(ctx, query, groupKey)
 
 	var group internal.Group
-	err := row.Scan(&group.GroupName, &group.EventKey, &group.TeamNumber, &group.GroupKey)
+	err := row.Scan(&group.GroupName, &group.EventKey, &group.TeamNumber, &group.AvatarImage, &group.GroupKey)
 	if err != nil {
 		return nil, handleError(err)
 	}

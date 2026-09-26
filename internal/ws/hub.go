@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
 
 type Message struct {
-	InfoType string
-	GroupKey string
-	Payload  json.RawMessage
+	GroupKey  string
+	Timestamp time.Time
+	InfoType  string
+	Payload   json.RawMessage
 }
 
 type Client struct {
