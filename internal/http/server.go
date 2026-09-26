@@ -1,15 +1,18 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"lasertracker_server/internal"
 	actions "lasertracker_server/internal/actions"
 	auth "lasertracker_server/internal/auth"
+	"lasertracker_server/internal/ws"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Info struct {
@@ -153,10 +156,11 @@ func loginHandler() http.HandlerFunc {
 				"is_admin":     member.IsAdmin,
 			},
 			"group_info": map[string]any{
-				"group_name":  group.GroupName,
-				"event_key":   group.EventKey,
-				"team_number": group.TeamNumber,
-				"group_key":   group.GroupKey,
+				"group_name":   group.GroupName,
+				"event_key":    group.EventKey,
+				"team_number":  group.TeamNumber,
+				"avatar_image": group.AvatarImage,
+				"group_key":    group.GroupKey,
 			},
 			"token": token,
 		}
@@ -222,7 +226,7 @@ func createGroupHandler() http.HandlerFunc {
 			return
 		}
 
-		var nm internal.Member
+		var nm internal.PrivateMember
 		nm.GroupKey = groupKey
 		nm.Username = username
 		nm.DisplayName = displayName
@@ -277,7 +281,7 @@ func createGroupHandler() http.HandlerFunc {
 	}
 }
 
-func createAccountHandler() http.HandlerFunc {
+func addMemberHandler(hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 		ctx := r.Context()
@@ -311,7 +315,7 @@ func createAccountHandler() http.HandlerFunc {
 			return
 		}
 
-		var nm internal.Member
+		var nm internal.PrivateMember
 		nm.GroupKey = groupKey
 		nm.Username = username
 		nm.DisplayName = displayName
@@ -361,29 +365,76 @@ func createAccountHandler() http.HandlerFunc {
 				"is_admin":     nm.IsAdmin,
 			},
 			"group_info": map[string]any{
-				"group_name":  ng.GroupName,
-				"event_key":   ng.EventKey,
-				"team_number": ng.TeamNumber,
-				"group_key":   ng.GroupKey,
+				"group_name":   ng.GroupName,
+				"event_key":    ng.EventKey,
+				"team_number":  ng.TeamNumber,
+				"avatar_image": ng.AvatarImage,
+				"group_key":    ng.GroupKey,
 			},
 			"token": token,
 		}
 		json.NewEncoder(w).Encode(response)
 
+		payload := map[string]any{
+			"member_info": map[string]any{
+				"group_key":    nm.GroupKey,
+				"username":     nm.Username,
+				"display_name": nm.DisplayName,
+				"location":     nm.Location,
+				"job":          nm.Job,
+				"role":         nm.Role,
+				"is_admin":     nm.IsAdmin,
+			},
+		}
+
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			return
+		}
+
+		hub.Broadcast(internal.Message{GroupKey: nm.GroupKey, Timestamp: time.Now(), InfoType: "MEMBER_ADDED", Payload: payloadBytes})
 	}
 }
 
-func wsHandler() http.HandlerFunc {
+func wsHandler(hub *ws.Hub) http.HandlerFunc {
+	return ws.ServeWS(hub, internal.GetConfig().JWTSecret)
+}
+
+func cors(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
 
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next(w, r)
 	}
 }
 
-func InitHTTPServer() {
+func InitHTTPServer(ctx context.Context, hub *ws.Hub) {
 	port := strconv.Itoa(internal.GetConfig().Port)
-	http.HandleFunc("GET /info", infoHandler())
-	http.HandleFunc("POST /account", createAccountHandler())
-	http.HandleFunc("POST /group", createGroupHandler())
-	http.HandleFunc("POST /login", loginHandler())
-	http.ListenAndServe(":"+port, nil)
+	http.HandleFunc("GET /info", cors(infoHandler()))
+	http.HandleFunc("POST /account", cors(addMemberHandler(hub)))
+	http.HandleFunc("POST /group", cors(createGroupHandler()))
+	http.HandleFunc("POST /login", cors(loginHandler()))
+	http.HandleFunc("GET /ws", cors(wsHandler(hub)))
+
+	server := &http.Server{
+		Addr: ":" + port,
+	}
+
+	go func() {
+		<-ctx.Done()
+		server.Close()
+	}()
+
+	server.ListenAndServe()
 }

@@ -3,18 +3,11 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"lasertracker_server/internal"
 	"sync"
-	"time"
 
 	"github.com/coder/websocket"
 )
-
-type Message struct {
-	GroupKey  string
-	Timestamp time.Time
-	InfoType  string
-	Payload   json.RawMessage
-}
 
 type Client struct {
 	GroupKey string
@@ -27,7 +20,7 @@ type Hub struct {
 	groups     map[string]map[*Client]bool
 	register   chan *Client
 	unregister chan *Client
-	broadcast  chan Message
+	broadcast  chan internal.Message
 	mu         sync.RWMutex
 }
 
@@ -36,7 +29,7 @@ func NewHub() *Hub {
 		groups:     make(map[string]map[*Client]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
-		broadcast:  make(chan Message, 256),
+		broadcast:  make(chan internal.Message, 256),
 	}
 }
 
@@ -68,7 +61,7 @@ func (h *Hub) Run(ctx context.Context) {
 			h.mu.Unlock()
 
 		case event := <-h.broadcast:
-			h.mu.RLock()
+			h.mu.Lock()
 			clients := h.groups[event.GroupKey]
 			data, err := json.Marshal(event)
 			if err == nil {
@@ -81,11 +74,11 @@ func (h *Hub) Run(ctx context.Context) {
 					}
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
 
-func (h *Hub) Broadcast(event Message) {
+func (h *Hub) Broadcast(event internal.Message) {
 	h.broadcast <- event
 }

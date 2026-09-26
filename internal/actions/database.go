@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -21,6 +22,16 @@ var (
 )
 
 var dbConnection, _ = InitDBConn()
+
+// There was an import loop with auth so I just remade hashPin here :)
+// Once again, there is most definitely a better solution
+func hashPinButCooler(pin string) string {
+	hashword, err := bcrypt.GenerateFromPassword([]byte(pin), bcrypt.DefaultCost)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return string(hashword)
+}
 
 func handleError(err error) error {
 	if err == nil {
@@ -142,7 +153,7 @@ func ChangeGroupEventKey(ctx context.Context, groupKey string, newEventKey strin
 	return handleError(err)
 }
 
-func AddMember(ctx context.Context, memberInfo internal.Member) error {
+func AddMember(ctx context.Context, memberInfo internal.PrivateMember) error {
 	adminInt := 0
 	username := memberInfo.Username
 	if memberInfo.IsAdmin {
@@ -166,24 +177,21 @@ func RemoveMember(ctx context.Context, groupKey string, username string) error {
 	return handleError(err)
 }
 
-func ChangeMemberStatus(ctx context.Context, groupKey string, username string, job string, location string) error {
-	query := `UPDATE members SET job = $1, location = $2 WHERE group_key = $3 AND username = $4`
-	cmdTag, err := dbConnection.Exec(ctx, query, job, location, groupKey, username)
-	if cmdTag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
+func UpdateMember(ctx context.Context, newMemberData internal.PublicMember) error {
+	query := `
+		UPDATE members 
+		SET display_name = $1, job = $2, role = $3, location = $4, is_admin = $5 
+		WHERE group_key = $6 AND username = $7
+	`
 
-	return handleError(err)
-}
-
-func ChangeAdminStatus(ctx context.Context, groupKey string, username string, isAdmin bool) error {
-	adminInt := 0
-	if isAdmin {
+	var adminInt int
+	if newMemberData.IsAdmin {
 		adminInt = 1
+	} else {
+		adminInt = 0
 	}
 
-	query := `UPDATE members SET is_admin = $1 WHERE group_key = $2 AND username = $3`
-	cmdTag, err := dbConnection.Exec(ctx, query, adminInt, groupKey, username)
+	cmdTag, err := dbConnection.Exec(ctx, query, newMemberData.DisplayName, newMemberData.Job, newMemberData.Role, newMemberData.Location, adminInt, newMemberData.GroupKey, newMemberData.Username)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -191,9 +199,10 @@ func ChangeAdminStatus(ctx context.Context, groupKey string, username string, is
 	return handleError(err)
 }
 
-func ChangePin(ctx context.Context, groupKey string, username string, newPinHash string) error {
+func ChangePin(ctx context.Context, request internal.PinChangeRequest) error {
+	hashed := hashPinButCooler(request.NewPin)
 	query := `UPDATE members SET pin_hash = $1, token_ver = token_ver + 1 WHERE group_key = $2 AND username = $3`
-	cmdTag, err := dbConnection.Exec(ctx, query, newPinHash, groupKey, username)
+	cmdTag, err := dbConnection.Exec(ctx, query, hashed, request.GroupKey, request.Username)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -219,15 +228,14 @@ func AddBattery(ctx context.Context, batteryInfo internal.Battery) error {
 	return handleError(err)
 }
 
-func ChangeBatteryStatus(ctx context.Context, groupKey string, batteryName string, status string, matchesUsed int, notes string) error {
+func UpdateBattery(ctx context.Context, battery internal.Battery) error {
 	query := `
 		UPDATE batteries 
 		SET status = $1, matches_used = $2, notes = $3, status_timestamp = $4 
 		WHERE group_key = $5 AND name = $6
 	`
-	timestamp := time.Now().Unix()
 
-	cmdTag, err := dbConnection.Exec(ctx, query, status, matchesUsed, notes, timestamp, groupKey, batteryName)
+	cmdTag, err := dbConnection.Exec(ctx, query, battery.Status, battery.MatchesUsed, battery.Notes, battery.Timestamp.Unix(), battery.GroupKey, battery.Name)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -266,11 +274,27 @@ func GetGroup(ctx context.Context, groupKey string) (*internal.Group, error) {
 	return &group, nil
 }
 
-func GetMember(ctx context.Context, groupKey string, username string) (*internal.Member, error) {
+func GetBattery(ctx context.Context, groupKey string, name string) (*internal.Battery, error) {
+	query := `SELECT group_key, name, status, matches_used, notes, status_timestamp FROM batteries WHERE group_key = $1 AND name = $2`
+	row := dbConnection.QueryRow(ctx, query, groupKey, name)
+
+	var battery internal.Battery
+	var timestamp int
+	err := row.Scan(&battery.GroupKey, &battery.Name, &battery.Status, &battery.MatchesUsed, &battery.Notes, &timestamp)
+	if err != nil {
+		return nil, handleError(err)
+	}
+
+	battery.Timestamp = time.Unix(int64(timestamp), 0)
+
+	return &battery, nil
+}
+
+func GetMember(ctx context.Context, groupKey string, username string) (*internal.PublicMember, error) {
 	query := `SELECT group_key, username, display_name, job, role, location, is_admin FROM members WHERE group_key = $1 AND username = $2`
 	row := dbConnection.QueryRow(ctx, query, groupKey, username)
 
-	var member internal.Member
+	var member internal.PublicMember
 	var isAdminInt int
 	err := row.Scan(&member.GroupKey, &member.Username, &member.DisplayName, &member.Job, &member.Role, &member.Location, &isAdminInt)
 	if err != nil {
