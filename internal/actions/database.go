@@ -261,6 +261,29 @@ func AddLogEntry(ctx context.Context, entry internal.LogEntry) error {
 	return handleError(err)
 }
 
+func GetAllLogs(ctx context.Context, groupKey string) ([]*internal.LogEntry, error) {
+	query := `SELECT group_key, username, action, timestamp FROM logs WHERE group_key = $1`
+	rows, err := dbConnection.Query(ctx, query, groupKey)
+	if err != nil {
+		return nil, handleError(err)
+	}
+	defer rows.Close()
+
+	logs := make([]*internal.LogEntry, 0)
+	for rows.Next() {
+		var log internal.LogEntry
+		if err := rows.Scan(&log.GroupKey, &log.Username, &log.Action, &log.Timestamp); err != nil {
+			return nil, handleError(err)
+		}
+		logs = append(logs, &log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, handleError(err)
+	}
+
+	return logs, nil
+}
+
 func GetGroup(ctx context.Context, groupKey string) (*internal.Group, error) {
 	query := `SELECT group_name, event_key, team_number, avatar_image, group_key FROM groups WHERE group_key = $1`
 	row := dbConnection.QueryRow(ctx, query, groupKey)
@@ -290,6 +313,29 @@ func GetBattery(ctx context.Context, groupKey string, name string) (*internal.Ba
 	return &battery, nil
 }
 
+func GetAllBatteries(ctx context.Context, groupKey string) ([]*internal.Battery, error) {
+	query := `SELECT group_key, name, status, matches_used, notes, status_timestamp FROM batteries WHERE group_key = $1`
+	rows, err := dbConnection.Query(ctx, query, groupKey)
+	if err != nil {
+		return nil, handleError(err)
+	}
+	defer rows.Close()
+
+	batteries := make([]*internal.Battery, 0)
+	for rows.Next() {
+		var battery internal.Battery
+		if err := rows.Scan(&battery.GroupKey, &battery.Name, &battery.Status, &battery.MatchesUsed, &battery.Notes, &battery.Timestamp); err != nil {
+			return nil, handleError(err)
+		}
+		batteries = append(batteries, &battery)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, handleError(err)
+	}
+
+	return batteries, nil
+}
+
 func GetMember(ctx context.Context, groupKey string, username string) (*internal.PublicMember, error) {
 	query := `SELECT group_key, username, display_name, job, role, location, is_admin FROM members WHERE group_key = $1 AND username = $2`
 	row := dbConnection.QueryRow(ctx, query, groupKey, username)
@@ -308,6 +354,31 @@ func GetMember(ctx context.Context, groupKey string, username string) (*internal
 	}
 
 	return &member, nil
+}
+
+func GetAllMembers(ctx context.Context, groupKey string) ([]*internal.PublicMember, error) {
+	query := `SELECT group_key, username, display_name, job, role, location, is_admin FROM members WHERE group_key = $1`
+	rows, err := dbConnection.Query(ctx, query, groupKey)
+	if err != nil {
+		return nil, handleError(err)
+	}
+	defer rows.Close()
+
+	members := make([]*internal.PublicMember, 0)
+	for rows.Next() {
+		var member internal.PublicMember
+		var isAdminInt int
+		if err := rows.Scan(&member.GroupKey, &member.Username, &member.DisplayName, &member.Job, &member.Role, &member.Location, &isAdminInt); err != nil {
+			return nil, handleError(err)
+		}
+		member.IsAdmin = isAdminInt == 1
+		members = append(members, &member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, handleError(err)
+	}
+
+	return members, nil
 }
 
 func GetMemberPinHash(ctx context.Context, groupKey string, username string) (string, error) {

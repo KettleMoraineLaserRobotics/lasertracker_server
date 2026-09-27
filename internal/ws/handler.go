@@ -101,6 +101,8 @@ func (c *Client) handleInboundMessage(ctx context.Context, hub *Hub, msg interna
 		c.handleAddBattery(ctx, hub, msg.Payload)
 	case "REMOVE_BATTERY":
 		c.handleRemoveBattery(ctx, hub, msg.Payload)
+	case "SYNC":
+		c.handleDataSync(ctx)
 	}
 }
 
@@ -285,4 +287,72 @@ func (c *Client) handleRemoveBattery(ctx context.Context, hub *Hub, rawPayload j
 
 	updatedPayload, _ := json.Marshal(payload)
 	hub.Broadcast(internal.Message{GroupKey: c.GroupKey, Timestamp: time.Now(), InfoType: "BATTERY_REMOVED", Payload: updatedPayload})
+}
+
+func (c *Client) handleDataSync(ctx context.Context) {
+	if _, err := actions.GetMember(ctx, c.GroupKey, c.Username); err != nil {
+		log.Printf("Failed to fetch requesting member %s: %v", c.Username, err)
+		return
+	}
+
+	members, err := actions.GetAllMembers(ctx, c.GroupKey)
+	if err != nil {
+		log.Printf("Error fetching sync members for group %s: %v", c.GroupKey, err)
+		return
+	}
+	batteries, err := actions.GetAllBatteries(ctx, c.GroupKey)
+	if err != nil {
+		log.Printf("Error fetching sync batteries for group %s: %v", c.GroupKey, err)
+		return
+	}
+	logs, err := actions.GetAllLogs(ctx, c.GroupKey)
+	if err != nil {
+		log.Printf("Error fetching sync logs for group %s: %v", c.GroupKey, err)
+		return
+	}
+	group, err := actions.GetGroup(ctx, c.GroupKey)
+	if err != nil {
+		log.Printf("Error fetching sync group %s: %v", c.GroupKey, err)
+		return
+	}
+	matches, err := actions.GetTeamMatches(group.TeamNumber, group.EventKey)
+	if err != nil {
+		log.Printf("Error fetching sync matches for group %s: %v", c.GroupKey, err)
+		return
+	}
+	streams, err := actions.GetStreams(group.TeamNumber, group.EventKey)
+	if err != nil {
+		log.Printf("Error fetching sync streams for group %s: %v", c.GroupKey, err)
+		return
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"members":   members,
+		"batteries": batteries,
+		"logs":      logs,
+		"group":     group,
+		"matches":   matches,
+		"streams":   streams,
+	})
+	if err != nil {
+		log.Printf("Error encoding sync payload for group %s: %v", c.GroupKey, err)
+		return
+	}
+	response, err := json.Marshal(internal.Message{
+		GroupKey:  c.GroupKey,
+		Timestamp: time.Now(),
+		InfoType:  "SYNC",
+		Payload:   payload,
+	})
+	if err != nil {
+		log.Printf("Error encoding sync message for group %s: %v", c.GroupKey, err)
+		return
+	}
+
+	select {
+	case c.Send <- response:
+	default:
+		log.Printf("Unable to send sync response to user %s: send queue is full", c.Username)
+	}
+
 }

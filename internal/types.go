@@ -16,7 +16,7 @@ type Group struct {
 	GroupKey    string `json:"group_key"`
 }
 
-type PublicMember struct {
+type PublicMember struct { // Client-accessible member type, no passwords
 	GroupKey    string `json:"group_key"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
@@ -26,7 +26,7 @@ type PublicMember struct {
 	IsAdmin     bool   `json:"is_admin"`
 }
 
-type PrivateMember struct {
+type PrivateMember struct { // Server-only member type, with passwords
 	GroupKey    string `json:"group_key"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
