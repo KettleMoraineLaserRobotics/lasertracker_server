@@ -181,13 +181,9 @@ func GetTeamEvents(teamInt int) ([]map[string]string, error) {
 	return list, nil
 }
 
-func GetTeamMatches(teamInt int, eventKey string) ([]internal.Match, error) {
+func GetEventMatches(eventKey string) ([]internal.Match, error) {
 	var data []map[string]any
-	teamNumber := strconv.Itoa(teamInt)
 	if TESTING {
-		if teamNumber != "2077" {
-			return nil, errors.New("Team number must be 2077 when testing")
-		}
 		file, err := os.Open("./example responses/" + eventKey + ".json")
 		if err != nil {
 			return nil, errors.New("Example response not found")
@@ -198,7 +194,7 @@ func GetTeamMatches(teamInt int, eventKey string) ([]internal.Match, error) {
 			return nil, errors.New("Error decoding example response")
 		}
 	} else {
-		req, err := http.NewRequest(http.MethodGet, TBA_API_URL+"/team/frc"+teamNumber+"/event/"+eventKey+"/matches", nil)
+		req, err := http.NewRequest(http.MethodGet, TBA_API_URL+"/event/"+eventKey+"/matches", nil)
 		if err != nil {
 			return nil, errors.New("Error making TBA request: " + err.Error())
 		}
@@ -256,13 +252,8 @@ func GetTeamMatches(teamInt int, eventKey string) ([]internal.Match, error) {
 		match.EventKey = item["event_key"].(string)
 		match.MatchKey = item["key"].(string)
 		match.MatchNum = int(item["match_number"].(float64))
-		if actualTime, ok := item["actual_time"].(float64); ok {
-			match.Timestamp = time.Unix(int64(actualTime), 0)
-			match.Played = true
-		} else {
-			match.Timestamp = time.Unix(int64(item["predicted_time"].(float64)), 0)
-			match.Played = false
-		}
+		match.PredictedTime = time.Unix(int64(item["predicted_time"].(float64)), 0)
+		match.ActualTime = time.Unix(int64(item["actual_time"].(float64)), 0)
 		list = append(list, match)
 	}
 

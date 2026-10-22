@@ -8,6 +8,7 @@ import (
 	"lasertracker_server/internal"
 	actions "lasertracker_server/internal/actions"
 	auth "lasertracker_server/internal/auth"
+	eventsync "lasertracker_server/internal/eventsync"
 	"lasertracker_server/internal/ws"
 	"net/http"
 	"strconv"
@@ -225,6 +226,8 @@ func createGroupHandler() http.HandlerFunc {
 			http.Error(w, "Failed to create group", http.StatusInternalServerError)
 			return
 		}
+
+		eventsync.RegisterEvent(ctx, eventKey)
 
 		var nm internal.PrivateMember
 		nm.GroupKey = groupKey

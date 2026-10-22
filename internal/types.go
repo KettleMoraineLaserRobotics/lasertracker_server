@@ -55,17 +55,17 @@ type Battery struct {
 }
 
 type Match struct {
-	Red1      int       `json:"red1"`
-	Red2      int       `json:"red2"`
-	Red3      int       `json:"red3"`
-	Blue1     int       `json:"blue1"`
-	Blue2     int       `json:"blue2"`
-	Blue3     int       `json:"blue3"`
-	MatchNum  int       `json:"match_num"`
-	MatchKey  string    `json:"match_key"`
-	EventKey  string    `json:"event_key"`
-	Timestamp time.Time `json:"timestamp"`
-	Played    bool      `json:"played"`
+	Red1          int       `json:"red1"`
+	Red2          int       `json:"red2"`
+	Red3          int       `json:"red3"`
+	Blue1         int       `json:"blue1"`
+	Blue2         int       `json:"blue2"`
+	Blue3         int       `json:"blue3"`
+	MatchNum      int       `json:"match_num"`
+	MatchKey      string    `json:"match_key"`
+	EventKey      string    `json:"event_key"`
+	PredictedTime time.Time `json:"predicted_time"`
+	ActualTime    time.Time `json:"actual_time"`
 }
 
 type Stream struct {

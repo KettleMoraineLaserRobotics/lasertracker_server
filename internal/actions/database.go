@@ -2,8 +2,11 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"lasertracker_server/internal"
@@ -105,9 +108,24 @@ func CreateTables() error {
         status_timestamp INTEGER NOT NULL,
         CONSTRAINT fk_battery_group FOREIGN KEY (group_key) REFERENCES groups(group_key) ON DELETE CASCADE,
         PRIMARY KEY (group_key, name)
-    )
-	`
+    );
 
+	CREATE TABLE IF NOT EXISTS matches (
+		event_key TEXT NOT NULL,
+		match_key TEXT PRIMARY KEY,
+		match_number INTEGER NOT NULL,
+		red_teams TEXT NOT NULL,
+		blue_teams TEXT NOT NULL,
+		predicted_time INTEGER NOT NULL,
+		actual_time INTEGER DEFAULT -1
+	);
+
+	CREATE TABLE IF NOT EXISTS alliances (
+		event_key TEXT PRIMARY KEY,
+		alliances_json TEXT NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	`
 	_, err := dbConnection.Exec(ctx, myevilschema)
 	return handleError(err)
 }
@@ -405,4 +423,110 @@ func GetMemberTokenVer(ctx context.Context, groupKey string, username string) (i
 	}
 
 	return tokenVer, nil
+}
+
+func GetTeamMatches(ctx context.Context, teamInt int, eventKey string) ([]*internal.Match, error) {
+	// Added ORDER BY so matches return in chronological schedule order
+	query := `
+		SELECT match_key, match_number, red_teams, blue_teams, predicted_time, actual_time 
+		FROM matches 
+		WHERE event_key = $1 
+		ORDER BY match_number ASC
+	`
+
+	rows, err := dbConnection.Query(ctx, query, eventKey)
+	if err != nil {
+		return nil, handleError(err)
+	}
+	defer rows.Close()
+
+	targetTeamStr := fmt.Sprintf("frc%d", teamInt)
+	matches := make([]*internal.Match, 0)
+
+	for rows.Next() {
+		var match internal.Match
+		var redTeamsJSON, blueTeamsJSON string
+
+		if err := rows.Scan(&match.MatchKey, &match.MatchNum, &redTeamsJSON, &blueTeamsJSON, &match.PredictedTime, &match.ActualTime); err != nil {
+			return nil, handleError(err)
+		}
+
+		var redList, blueList []string
+		if err := json.Unmarshal([]byte(redTeamsJSON), &redList); err != nil {
+			continue
+		}
+		if err := json.Unmarshal([]byte(blueTeamsJSON), &blueList); err != nil {
+			continue
+		}
+
+		isTeamInMatch := false
+		for _, team := range redList {
+			if team == targetTeamStr {
+				isTeamInMatch = true
+				break
+			}
+		}
+		if !isTeamInMatch {
+			for _, team := range blueList {
+				if team == targetTeamStr {
+					isTeamInMatch = true
+					break
+				}
+			}
+		}
+
+		if !isTeamInMatch {
+			continue
+		}
+
+		if len(redList) >= 3 {
+			match.Red1, _ = strconv.Atoi(strings.TrimPrefix(redList[0], "frc"))
+			match.Red2, _ = strconv.Atoi(strings.TrimPrefix(redList[1], "frc"))
+			match.Red3, _ = strconv.Atoi(strings.TrimPrefix(redList[2], "frc"))
+		}
+		if len(blueList) >= 3 {
+			match.Blue1, _ = strconv.Atoi(strings.TrimPrefix(blueList[0], "frc"))
+			match.Blue2, _ = strconv.Atoi(strings.TrimPrefix(blueList[1], "frc"))
+			match.Blue3, _ = strconv.Atoi(strings.TrimPrefix(blueList[2], "frc"))
+		}
+
+		matches = append(matches, &match)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, handleError(err)
+	}
+
+	return matches, nil
+}
+
+func AddMatch(ctx context.Context, match internal.Match) error {
+	query := `INSERT INTO matches (event_key, match_key, match_number, red_teams, blue_teams, predicted_time, actual_time) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+
+	redList := []string{"frc" + strconv.Itoa(match.Red1), "frc" + strconv.Itoa(match.Red2), "frc" + strconv.Itoa(match.Red3)}
+	blueList := []string{"frc" + strconv.Itoa(match.Blue1), "frc" + strconv.Itoa(match.Blue2), "frc" + strconv.Itoa(match.Blue3)}
+
+	redJSON, err := json.Marshal(redList)
+	if err != nil {
+		return err
+	}
+
+	blueJSON, err := json.Marshal(blueList)
+	if err != nil {
+		return err
+	}
+
+	_, err = dbConnection.Exec(ctx, query, match.MatchKey, match.EventKey, match.MatchNum, redJSON, blueJSON, match.PredictedTime, match.ActualTime)
+	return handleError(err)
+}
+
+func IsEventTracked(ctx context.Context, eventKey string) (bool, error) {
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM matches WHERE event_key = $1)`
+
+	err := dbConnection.QueryRow(ctx, query, eventKey).Scan(&exists)
+	if err != nil {
+		return false, handleError(err)
+	}
+	return exists, nil
 }

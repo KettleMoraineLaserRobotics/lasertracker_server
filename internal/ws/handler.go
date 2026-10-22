@@ -315,7 +315,7 @@ func (c *Client) handleDataSync(ctx context.Context) {
 		log.Printf("Error fetching sync group %s: %v", c.GroupKey, err)
 		return
 	}
-	matches, err := actions.GetTeamMatches(group.TeamNumber, group.EventKey)
+	matches, err := actions.GetTeamMatches(ctx, group.TeamNumber, group.EventKey)
 	if err != nil {
 		log.Printf("Error fetching sync matches for group %s: %v", c.GroupKey, err)
 		return
