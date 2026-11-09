@@ -3,7 +3,9 @@ package internal
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -22,25 +24,19 @@ type config struct {
 
 func loadConfig() *config {
 	instName := os.Getenv("LT_INSTANCE_NAME")
-	ver := os.Getenv("LT_VERSTION")
+	ver := os.Getenv("LT_VERSION")
 	dbUrl := os.Getenv("LT_DATABASE_URL")
-	port, _ := strconv.Atoi(os.Getenv("LT_PORT"))
+	port, err := strconv.Atoi(os.Getenv("LT_PORT"))
+	if err != nil || port <= 0 {
+		port = 2077
+	}
 	tba := os.Getenv("LT_TBA_API_KEY")
 	testingStr := os.Getenv("LT_IS_TESTING")
 	testingBool := false
 	if testingStr == "true" {
 		testingBool = true
 	}
-	jwt := "Hi, I am a secret. My background consists of letters and numbers."
-	if _, err := os.Stat(".secret"); err == nil {
-		secretBytes, readErr := os.ReadFile(".secret")
-		if readErr == nil {
-			jwt = strings.TrimSpace(string(secretBytes))
-		}
-	} else {
-		secret, _ := GenerateRandomSecret(32)
-		jwt = secret
-	}
+	jwt := loadJWTSecret()
 
 	var cfg config
 	cfg.InstanceName = instName
@@ -52,6 +48,32 @@ func loadConfig() *config {
 	cfg.IsTesting = testingBool
 
 	return &cfg
+}
+
+func loadJWTSecret() string {
+	if envSecret := strings.TrimSpace(os.Getenv("LT_JWT_SECRET")); envSecret != "" {
+		return envSecret
+	}
+
+	secretBytes, err := os.ReadFile(".secret")
+	if err == nil {
+		if secret := strings.TrimSpace(string(secretBytes)); secret != "" {
+			return secret
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Fatalf("Unable to read .secret: %v", err)
+	}
+
+	secret, err := GenerateRandomSecret(32)
+	if err != nil {
+		log.Fatalf("Unable to generate JWT secret: %v", err)
+	}
+	if err := os.WriteFile(".secret", []byte(secret+"\n"), 0600); err != nil {
+		log.Fatalf("Unable to save JWT secret to .secret: %v", err)
+	}
+	log.Printf("Generated a new JWT secret and saved it to .secret")
+
+	return secret
 }
 
 var lock = &sync.Mutex{}

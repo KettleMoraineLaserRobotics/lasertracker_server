@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"lasertracker_server/internal"
 
@@ -67,6 +66,10 @@ func InitDBConn() (*pgxpool.Pool, error) {
 }
 
 func CreateTables() error {
+	if dbConnection == nil {
+		return fmt.Errorf("%w: no database connection, check LT_DATABASE_URL", ErrDatabase)
+	}
+
 	ctx := context.Background()
 	myevilschema := `
 	CREATE TABLE IF NOT EXISTS groups (
@@ -95,7 +98,7 @@ func CreateTables() error {
         group_key TEXT NOT NULL,
         username TEXT NOT NULL,
         action TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
+        timestamp TIMESTAMPTZ NOT NULL,
         CONSTRAINT fk_log_group FOREIGN KEY (group_key) REFERENCES groups(group_key) ON DELETE CASCADE
 	);
 
@@ -105,7 +108,7 @@ func CreateTables() error {
         status TEXT NOT NULL,
         matches_used INTEGER NOT NULL,
         notes TEXT,
-        status_timestamp INTEGER NOT NULL,
+        status_timestamp TIMESTAMPTZ NOT NULL,
         CONSTRAINT fk_battery_group FOREIGN KEY (group_key) REFERENCES groups(group_key) ON DELETE CASCADE,
         PRIMARY KEY (group_key, name)
     );
@@ -116,8 +119,8 @@ func CreateTables() error {
 		match_number INTEGER NOT NULL,
 		red_teams TEXT NOT NULL,
 		blue_teams TEXT NOT NULL,
-		predicted_time INTEGER NOT NULL,
-		actual_time INTEGER DEFAULT -1
+		predicted_time TIMESTAMPTZ,
+		actual_time TIMESTAMPTZ
 	);
 
 	CREATE TABLE IF NOT EXISTS alliances (
@@ -139,7 +142,7 @@ func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string)
 		}
 	}
 
-	groupCreatinator := `INSERT INTO groups (group_name, event_key, team_number, avatar_image, group_key) VALUES ($1, $2, $3, $4)`
+	groupCreatinator := `INSERT INTO groups (group_name, event_key, team_number, avatar_image, group_key) VALUES ($1, $2, $3, $4, $5)`
 
 	avatar, avatarerr := teamAvatar(groupInfo.TeamNumber)
 	if avatarerr != nil {
@@ -242,7 +245,7 @@ func AddBattery(ctx context.Context, batteryInfo internal.Battery) error {
 	query := `INSERT INTO batteries (group_key, name, status, matches_used, notes, status_timestamp) 
 	          VALUES ($1, $2, $3, $4, $5, $6)`
 
-	_, err := dbConnection.Exec(ctx, query, batteryInfo.GroupKey, batteryInfo.Name, batteryInfo.Status, batteryInfo.MatchesUsed, batteryInfo.Notes, batteryInfo.Timestamp.Unix())
+	_, err := dbConnection.Exec(ctx, query, batteryInfo.GroupKey, batteryInfo.Name, batteryInfo.Status, batteryInfo.MatchesUsed, batteryInfo.Notes, batteryInfo.Timestamp)
 	return handleError(err)
 }
 
@@ -253,7 +256,7 @@ func UpdateBattery(ctx context.Context, battery internal.Battery) error {
 		WHERE group_key = $5 AND name = $6
 	`
 
-	cmdTag, err := dbConnection.Exec(ctx, query, battery.Status, battery.MatchesUsed, battery.Notes, battery.Timestamp.Unix(), battery.GroupKey, battery.Name)
+	cmdTag, err := dbConnection.Exec(ctx, query, battery.Status, battery.MatchesUsed, battery.Notes, battery.Timestamp, battery.GroupKey, battery.Name)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -320,13 +323,10 @@ func GetBattery(ctx context.Context, groupKey string, name string) (*internal.Ba
 	row := dbConnection.QueryRow(ctx, query, groupKey, name)
 
 	var battery internal.Battery
-	var timestamp int
-	err := row.Scan(&battery.GroupKey, &battery.Name, &battery.Status, &battery.MatchesUsed, &battery.Notes, &timestamp)
+	err := row.Scan(&battery.GroupKey, &battery.Name, &battery.Status, &battery.MatchesUsed, &battery.Notes, &battery.Timestamp)
 	if err != nil {
 		return nil, handleError(err)
 	}
-
-	battery.Timestamp = time.Unix(int64(timestamp), 0)
 
 	return &battery, nil
 }
@@ -426,12 +426,12 @@ func GetMemberTokenVer(ctx context.Context, groupKey string, username string) (i
 }
 
 func GetTeamMatches(ctx context.Context, teamInt int, eventKey string) ([]*internal.Match, error) {
-	// Added ORDER BY so matches return in chronological schedule order
+	// Ordered by schedule, since match_number restarts at 1 for each comp level (qm1, sf1m1, f1m1)
 	query := `
-		SELECT match_key, match_number, red_teams, blue_teams, predicted_time, actual_time 
+		SELECT event_key, match_key, match_number, red_teams, blue_teams, predicted_time, actual_time 
 		FROM matches 
 		WHERE event_key = $1 
-		ORDER BY match_number ASC
+		ORDER BY predicted_time ASC NULLS LAST, match_key ASC
 	`
 
 	rows, err := dbConnection.Query(ctx, query, eventKey)
@@ -447,7 +447,7 @@ func GetTeamMatches(ctx context.Context, teamInt int, eventKey string) ([]*inter
 		var match internal.Match
 		var redTeamsJSON, blueTeamsJSON string
 
-		if err := rows.Scan(&match.MatchKey, &match.MatchNum, &redTeamsJSON, &blueTeamsJSON, &match.PredictedTime, &match.ActualTime); err != nil {
+		if err := rows.Scan(&match.EventKey, &match.MatchKey, &match.MatchNum, &redTeamsJSON, &blueTeamsJSON, &match.PredictedTime, &match.ActualTime); err != nil {
 			return nil, handleError(err)
 		}
 
@@ -501,7 +501,17 @@ func GetTeamMatches(ctx context.Context, teamInt int, eventKey string) ([]*inter
 }
 
 func AddMatch(ctx context.Context, match internal.Match) error {
-	query := `INSERT INTO matches (event_key, match_key, match_number, red_teams, blue_teams, predicted_time, actual_time) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	query := `
+		INSERT INTO matches (event_key, match_key, match_number, red_teams, blue_teams, predicted_time, actual_time) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (match_key) DO UPDATE SET
+			event_key = EXCLUDED.event_key,
+			match_number = EXCLUDED.match_number,
+			red_teams = EXCLUDED.red_teams,
+			blue_teams = EXCLUDED.blue_teams,
+			predicted_time = EXCLUDED.predicted_time,
+			actual_time = EXCLUDED.actual_time
+	`
 
 	redList := []string{"frc" + strconv.Itoa(match.Red1), "frc" + strconv.Itoa(match.Red2), "frc" + strconv.Itoa(match.Red3)}
 	blueList := []string{"frc" + strconv.Itoa(match.Blue1), "frc" + strconv.Itoa(match.Blue2), "frc" + strconv.Itoa(match.Blue3)}
@@ -516,7 +526,7 @@ func AddMatch(ctx context.Context, match internal.Match) error {
 		return err
 	}
 
-	_, err = dbConnection.Exec(ctx, query, match.MatchKey, match.EventKey, match.MatchNum, redJSON, blueJSON, match.PredictedTime, match.ActualTime)
+	_, err = dbConnection.Exec(ctx, query, match.EventKey, match.MatchKey, match.MatchNum, string(redJSON), string(blueJSON), match.PredictedTime, match.ActualTime)
 	return handleError(err)
 }
 

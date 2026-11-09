@@ -17,11 +17,23 @@ func RegisterEvent(ctx context.Context, eventKey string) error {
 	}
 
 	matches, err := actions.GetEventMatches(eventKey)
+	if err != nil {
+		return err
+	}
 
-	for match := range matches {
-		err := actions.AddMatch(ctx, matches[match])
-		if err != nil {
-			log.Printf("Error adding match to table: ", err)
+	for _, match := range matches {
+		if err := actions.AddMatch(ctx, match); err != nil {
+			log.Printf("Error adding match %s to table: %v", match.MatchKey, err)
 		}
 	}
+
+	return nil
+}
+
+func RegisterEventInBackground(eventKey string) {
+	go func() {
+		if err := RegisterEvent(context.Background(), eventKey); err != nil {
+			log.Printf("Error registering event %s: %v", eventKey, err)
+		}
+	}()
 }

@@ -242,22 +242,44 @@ func GetEventMatches(eventKey string) ([]internal.Match, error) {
 			continue
 		}
 
+		eventKey, ok1 := item["event_key"].(string)
+		matchKey, ok2 := item["key"].(string)
+		matchNum, ok3 := item["match_number"].(float64)
+		if !ok1 || !ok2 || !ok3 {
+			continue
+		}
+
 		var match internal.Match
-		match.Blue1, _ = strconv.Atoi(strings.TrimPrefix(blueKeys[0].(string), "frc"))
-		match.Blue2, _ = strconv.Atoi(strings.TrimPrefix(blueKeys[1].(string), "frc"))
-		match.Blue3, _ = strconv.Atoi(strings.TrimPrefix(blueKeys[2].(string), "frc"))
-		match.Red1, _ = strconv.Atoi(strings.TrimPrefix(redKeys[0].(string), "frc"))
-		match.Red2, _ = strconv.Atoi(strings.TrimPrefix(redKeys[1].(string), "frc"))
-		match.Red3, _ = strconv.Atoi(strings.TrimPrefix(redKeys[2].(string), "frc"))
-		match.EventKey = item["event_key"].(string)
-		match.MatchKey = item["key"].(string)
-		match.MatchNum = int(item["match_number"].(float64))
-		match.PredictedTime = time.Unix(int64(item["predicted_time"].(float64)), 0)
-		match.ActualTime = time.Unix(int64(item["actual_time"].(float64)), 0)
+		match.Blue1 = parseTeamKey(blueKeys[0])
+		match.Blue2 = parseTeamKey(blueKeys[1])
+		match.Blue3 = parseTeamKey(blueKeys[2])
+		match.Red1 = parseTeamKey(redKeys[0])
+		match.Red2 = parseTeamKey(redKeys[1])
+		match.Red3 = parseTeamKey(redKeys[2])
+		match.EventKey = eventKey
+		match.MatchKey = matchKey
+		match.MatchNum = int(matchNum)
+		if predicted, ok := item["predicted_time"].(float64); ok {
+			t := time.Unix(int64(predicted), 0)
+			match.PredictedTime = &t
+		}
+		if actual, ok := item["actual_time"].(float64); ok {
+			t := time.Unix(int64(actual), 0)
+			match.ActualTime = &t
+		}
 		list = append(list, match)
 	}
 
 	return list, nil
+}
+
+func parseTeamKey(key any) int {
+	keyStr, ok := key.(string)
+	if !ok {
+		return 0
+	}
+	teamNum, _ := strconv.Atoi(strings.TrimPrefix(keyStr, "frc"))
+	return teamNum
 }
 
 func GetStreams(teamInt int, eventKey string) ([]internal.Stream, error) {

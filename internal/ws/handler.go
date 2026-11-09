@@ -6,6 +6,7 @@ import (
 	"lasertracker_server/internal"
 	"lasertracker_server/internal/actions"
 	"lasertracker_server/internal/auth"
+	"lasertracker_server/internal/eventsync"
 	"log"
 	"net/http"
 	"time"
@@ -40,8 +41,11 @@ func ServeWS(hub *Hub, jwtSecret string) http.HandlerFunc {
 
 		hub.register <- client
 
-		go client.writePump(r.Context())
-		go client.readPump(r.Context(), hub)
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+
+		go client.writePump(ctx)
+		client.readPump(ctx, hub)
 	}
 }
 
@@ -236,6 +240,8 @@ func (c *Client) handleUpdateGroupEventKey(ctx context.Context, hub *Hub, rawPay
 		log.Printf("Error updating group event key for group %s: %v", c.GroupKey, err)
 		return
 	}
+
+	eventsync.RegisterEventInBackground(payload.EventKey)
 
 	updatedPayload, _ := json.Marshal(payload)
 	hub.Broadcast(internal.Message{GroupKey: c.GroupKey, Timestamp: time.Now(), InfoType: "GROUP_EVENT_KEY_UPDATED", Payload: updatedPayload})

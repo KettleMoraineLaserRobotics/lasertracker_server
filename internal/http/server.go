@@ -227,7 +227,7 @@ func createGroupHandler() http.HandlerFunc {
 			return
 		}
 
-		eventsync.RegisterEvent(ctx, eventKey)
+		eventsync.RegisterEventInBackground(eventKey)
 
 		var nm internal.PrivateMember
 		nm.GroupKey = groupKey
@@ -422,7 +422,7 @@ func cors(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func InitHTTPServer(ctx context.Context, hub *ws.Hub) {
+func InitHTTPServer(ctx context.Context, hub *ws.Hub) error {
 	port := strconv.Itoa(internal.GetConfig().Port)
 	http.HandleFunc("GET /info", cors(infoHandler()))
 	http.HandleFunc("POST /account", cors(addMemberHandler(hub)))
@@ -439,5 +439,8 @@ func InitHTTPServer(ctx context.Context, hub *ws.Hub) {
 		server.Close()
 	}()
 
-	server.ListenAndServe()
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
