@@ -17,7 +17,7 @@ const TBA_API_URL = "https://www.thebluealliance.com/api/v3"
 var TBA_API_KEY = internal.GetConfig().TBAAPIKey
 var TESTING = internal.GetConfig().IsTesting
 
-func teamName(teamInt int) (string, error) {
+func TeamName(teamInt int) (string, error) {
 	var data map[string]any
 	teamNumber := strconv.Itoa(teamInt)
 	if TESTING {
@@ -63,7 +63,7 @@ func teamName(teamInt int) (string, error) {
 	return teamName, nil
 }
 
-func teamAvatar(teamInt int) (string, error) {
+func TeamAvatar(teamInt int) (string, error) {
 	var data []map[string]any
 	teamNumber := strconv.Itoa(teamInt)
 	if TESTING {
@@ -115,11 +115,11 @@ func teamAvatar(teamInt int) (string, error) {
 }
 
 func GetTeamInfo(teamInt int) (map[string]string, error) {
-	name, err := teamName(teamInt)
+	name, err := TeamName(teamInt)
 	if err != nil {
 		return nil, errors.New(err.Error())
 	}
-	avatar, err := teamAvatar(teamInt)
+	avatar, err := TeamAvatar(teamInt)
 	if err != nil {
 		return nil, errors.New(err.Error())
 	}

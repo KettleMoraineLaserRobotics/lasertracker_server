@@ -144,7 +144,7 @@ func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string)
 
 	groupCreatinator := `INSERT INTO groups (group_name, event_key, team_number, avatar_image, group_key) VALUES ($1, $2, $3, $4, $5)`
 
-	avatar, avatarerr := teamAvatar(groupInfo.TeamNumber)
+	avatar, avatarerr := TeamAvatar(groupInfo.TeamNumber)
 	if avatarerr != nil {
 		avatar = "none"
 	}
@@ -201,8 +201,8 @@ func RemoveMember(ctx context.Context, groupKey string, username string) error {
 func UpdateMember(ctx context.Context, newMemberData internal.PublicMember) error {
 	query := `
 		UPDATE members 
-		SET display_name = $1, job = $2, role = $3, location = $4, is_admin = $5 
-		WHERE group_key = $6 AND username = $7
+		SET display_name = $1, job = $2, location = $3, is_admin = $4 
+		WHERE group_key = $5 AND username = $6
 	`
 
 	var adminInt int
@@ -212,7 +212,7 @@ func UpdateMember(ctx context.Context, newMemberData internal.PublicMember) erro
 		adminInt = 0
 	}
 
-	cmdTag, err := dbConnection.Exec(ctx, query, newMemberData.DisplayName, newMemberData.Job, newMemberData.Role, newMemberData.Location, adminInt, newMemberData.GroupKey, newMemberData.Username)
+	cmdTag, err := dbConnection.Exec(ctx, query, newMemberData.DisplayName, newMemberData.Job, newMemberData.Location, adminInt, newMemberData.GroupKey, newMemberData.Username)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}

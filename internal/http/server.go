@@ -17,8 +17,8 @@ import (
 )
 
 type Info struct {
-	InstanceName string
-	Version      string
+	InstanceName string `json:"instance_name"`
+	Version      string `json:"version"`
 }
 
 type CreateUserRequest struct {
@@ -217,6 +217,7 @@ func createGroupHandler() http.HandlerFunc {
 		ng.EventKey = eventKey
 		ng.TeamNumber = teamNumber
 		ng.GroupKey = groupKey
+		ng.AvatarImage, _ = actions.TeamAvatar(teamNumber)
 
 		if err := actions.CreateGroup(ctx, ng, groupKey); err != nil {
 			if errors.Is(err, actions.ErrAlreadyExists) {
@@ -273,10 +274,11 @@ func createGroupHandler() http.HandlerFunc {
 				"is_admin":     nm.IsAdmin,
 			},
 			"group_info": map[string]any{
-				"group_name":  ng.GroupName,
-				"event_key":   ng.EventKey,
-				"team_number": ng.TeamNumber,
-				"group_key":   ng.GroupKey,
+				"group_name":   ng.GroupName,
+				"event_key":    ng.EventKey,
+				"team_number":  ng.TeamNumber,
+				"avatar_image": ng.AvatarImage,
+				"group_key":    ng.GroupKey,
 			},
 			"token": token,
 		}

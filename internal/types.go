@@ -84,4 +84,5 @@ type Message struct {
 	Timestamp time.Time       `json:"timestamp"`
 	InfoType  string          `json:"info_type"`
 	Payload   json.RawMessage `json:"payload"`
+	RequestID string          `json:"request_id,omitempty"`
 }
