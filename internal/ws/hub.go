@@ -30,6 +30,10 @@ type directMessage struct {
 	data   []byte
 }
 
+type Broadcaster interface {
+	Broadcast(internal.Message)
+}
+
 func NewHub() *Hub {
 	return &Hub{
 		groups:     make(map[string]map[*Client]bool),

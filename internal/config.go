@@ -51,10 +51,6 @@ func loadConfig() *config {
 }
 
 func loadJWTSecret() string {
-	if envSecret := strings.TrimSpace(os.Getenv("LT_JWT_SECRET")); envSecret != "" {
-		return envSecret
-	}
-
 	secretBytes, err := os.ReadFile(".secret")
 	if err == nil {
 		if secret := strings.TrimSpace(string(secretBytes)); secret != "" {

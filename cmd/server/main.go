@@ -10,6 +10,7 @@ import (
 
 	"lasertracker_server/internal"
 	"lasertracker_server/internal/actions"
+	"lasertracker_server/internal/eventsync"
 	"lasertracker_server/internal/http"
 	"lasertracker_server/internal/ws"
 )
@@ -25,6 +26,7 @@ func main() {
 
 	hub := ws.NewHub()
 	go hub.Run(ctx)
+	go eventsync.Start(ctx, hub)
 
 	log.Printf("%s", "Starting "+cfg.InstanceName+" on port "+strconv.Itoa(cfg.Port))
 	if err := http.InitHTTPServer(ctx, hub); err != nil {

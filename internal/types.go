@@ -39,10 +39,11 @@ type PrivateMember struct { // Server-only member type, with passwords
 }
 
 type LogEntry struct {
-	GroupKey  string    `json:"group_key"`
-	Username  string    `json:"username"`
-	Action    string    `json:"action"`
-	Timestamp time.Time `json:"timestamp"`
+	GroupKey       string    `json:"group_key"`
+	RequestingUser string    `json:"requesting_user"`
+	ActionedUser   string    `json:"actioned_user"` // Required for cases where requesting user is not actioned user
+	Action         string    `json:"action"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 type Battery struct {
@@ -66,11 +67,32 @@ type Match struct {
 	EventKey      string     `json:"event_key"`
 	PredictedTime *time.Time `json:"predicted_time,omitempty"`
 	ActualTime    *time.Time `json:"actual_time,omitempty"`
+	CompLevel     string     `json:"comp_level"`
+	SetNumber     int        `json:"set_number"`
 }
 
 type Stream struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
+	Date string `json:"date"`
+	Type string `json:"type"`
+}
+
+type TrackedEvent struct {
+	EventKey     string
+	ETag         string
+	LastPolled   *time.Time
+	LastChanged  *time.Time
+	NextPollAt   time.Time
+	FailCount    int
+	StartDate    *time.Time
+	EndDate      *time.Time
+	WebcastsJSON string
+}
+
+type GroupRef struct {
+	GroupKey   string
+	TeamNumber int
 }
 
 type PinChangeRequest struct {

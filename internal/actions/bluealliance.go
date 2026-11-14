@@ -1,8 +1,12 @@
 package actions
 
 import (
+	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -16,6 +20,76 @@ const TBA_API_URL = "https://www.thebluealliance.com/api/v3"
 
 var TBA_API_KEY = internal.GetConfig().TBAAPIKey
 var TESTING = internal.GetConfig().IsTesting
+
+var tbaClient = &http.Client{Timeout: 10 * time.Second}
+
+type tbaResult struct {
+	Body        []byte
+	ETag        string
+	MaxAge      time.Duration
+	NotModified bool
+}
+
+var ErrTBAAuth = errors.New("TBA rejected the API key")
+var ErrTBANotFound = errors.New("TBA: not found")
+
+func tbaGet(ctx context.Context, path, etag string) (*tbaResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, TBA_API_URL+path, nil)
+	if err != nil {
+		return nil, errors.New("Error making TBA request: " + err.Error())
+	}
+
+	req.Header.Set("X-TBA-Auth-Key", TBA_API_KEY)
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+
+	resp, err := tbaClient.Do(req)
+	if err != nil {
+		return nil, errors.New("Error sending TBA request: " + err.Error())
+	}
+	defer resp.Body.Close()
+
+	result := &tbaResult{ETag: resp.Header.Get("ETag")}
+	for _, part := range strings.Split(resp.Header.Get("Cache-Control"), ",") {
+		part = strings.TrimSpace(part)
+		if v, ok := strings.CutPrefix(part, "max-age="); ok {
+			if secs, err := strconv.Atoi(v); err == nil {
+				result.MaxAge = time.Duration(secs) * time.Second
+			}
+		}
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, errors.New("Error reading TBA response: " + err.Error())
+		}
+		result.Body = body
+		return result, nil
+	case http.StatusNotModified:
+		result.NotModified = true
+		return result, nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, ErrTBAAuth
+	case http.StatusNotFound:
+		return nil, ErrTBANotFound
+	default:
+		return nil, errors.New("TBA returned status " + resp.Status)
+	}
+}
+
+func tbaGetJSON(ctx context.Context, path string, out any) error {
+	res, err := tbaGet(ctx, path, "")
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(res.Body, out); err != nil {
+		return errors.New("Error decoding TBA response: " + err.Error())
+	}
+	return nil
+}
 
 func TeamName(teamInt int) (string, error) {
 	var data map[string]any
@@ -34,25 +108,8 @@ func TeamName(teamInt int) (string, error) {
 			return "", errors.New("Error decoding example response")
 		}
 	} else {
-		req, err := http.NewRequest(http.MethodGet, TBA_API_URL+"/team/frc"+teamNumber, nil)
-		if err != nil {
-			return "", errors.New("Error making TBA request: " + err.Error())
-		}
-
-		req.Header.Set("X-TBA-Auth-Key", TBA_API_KEY)
-
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", errors.New("Error sending TBA request: " + err.Error())
-		}
-		defer resp.Body.Close()
-
-		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-			return "", errors.New("Error decoding TBA response: " + err.Error())
+		if err := tbaGetJSON(context.Background(), "/team/frc"+teamNumber, &data); err != nil {
+			return "", err
 		}
 	}
 
@@ -80,25 +137,8 @@ func TeamAvatar(teamInt int) (string, error) {
 			return "", errors.New("Error decoding example response")
 		}
 	} else {
-		req, err := http.NewRequest(http.MethodGet, TBA_API_URL+"/team/frc"+teamNumber+"/media/"+strconv.Itoa(time.Now().Year()), nil)
-		if err != nil {
-			return "", errors.New("Error making TBA request: " + err.Error())
-		}
-
-		req.Header.Set("X-TBA-Auth-Key", TBA_API_KEY)
-
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", errors.New("Error sending TBA request: " + err.Error())
-		}
-		defer resp.Body.Close()
-
-		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-			return "", errors.New("Error decoding TBA response: " + err.Error())
+		if err := tbaGetJSON(context.Background(), "/team/frc"+teamNumber+"/media/"+strconv.Itoa(time.Now().Year()), &data); err != nil {
+			return "", err
 		}
 	}
 
@@ -145,25 +185,8 @@ func GetTeamEvents(teamInt int) ([]map[string]string, error) {
 			return nil, errors.New("Error decoding example response")
 		}
 	} else {
-		req, err := http.NewRequest(http.MethodGet, TBA_API_URL+"/team/frc"+teamNumber+"/events/"+strconv.Itoa(time.Now().Year()), nil)
-		if err != nil {
-			return nil, errors.New("Error making TBA request: " + err.Error())
-		}
-
-		req.Header.Set("X-TBA-Auth-Key", TBA_API_KEY)
-
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, errors.New("Error sending TBA request: " + err.Error())
-		}
-		defer resp.Body.Close()
-
-		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-			return nil, errors.New("Error decoding TBA response: " + err.Error())
+		if err := tbaGetJSON(context.Background(), "/team/frc"+teamNumber+"/events/"+strconv.Itoa(time.Now().Year()), &data); err != nil {
+			return nil, err
 		}
 	}
 
@@ -181,96 +204,144 @@ func GetTeamEvents(teamInt int) ([]map[string]string, error) {
 	return list, nil
 }
 
-func GetEventMatches(eventKey string) ([]internal.Match, error) {
-	var data []map[string]any
-	if TESTING {
-		file, err := os.Open("./example responses/" + eventKey + ".json")
-		if err != nil {
-			return nil, errors.New("Example response not found")
-		}
-		defer file.Close()
+type tbaMatch struct {
+	Key           string `json:"key"`
+	EventKey      string `json:"event_key"`
+	CompLevel     string `json:"comp_level"`
+	SetNumber     int    `json:"set_number"`
+	MatchNumber   int    `json:"match_number"`
+	PredictedTime *int64 `json:"predicted_time"`
+	ActualTime    *int64 `json:"actual_time"`
+	Alliances     struct {
+		Red struct {
+			TeamKeys []string `json:"team_keys"`
+		} `json:"red"`
+		Blue struct {
+			TeamKeys []string `json:"team_keys"`
+		} `json:"blue"`
+	} `json:"alliances"`
+}
 
-		if err := json.NewDecoder(file).Decode(&data); err != nil {
-			return nil, errors.New("Error decoding example response")
-		}
-	} else {
-		req, err := http.NewRequest(http.MethodGet, TBA_API_URL+"/event/"+eventKey+"/matches", nil)
-		if err != nil {
-			return nil, errors.New("Error making TBA request: " + err.Error())
-		}
-
-		req.Header.Set("X-TBA-Auth-Key", TBA_API_KEY)
-
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, errors.New("Error sending TBA request: " + err.Error())
-		}
-		defer resp.Body.Close()
-
-		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-			return nil, errors.New("Error decoding TBA response: " + err.Error())
-		}
+func parseMatches(data []byte) ([]internal.Match, error) {
+	var raw []tbaMatch
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, errors.New("Error decoding TBA matches: " + err.Error())
 	}
-
-	var list []internal.Match
-
-	for _, item := range data {
-		alliances, ok := item["alliances"].(map[string]any)
-		if !ok {
-			continue
+	list := make([]internal.Match, 0, len(raw))
+	for _, m := range raw {
+		match := internal.Match{
+			MatchKey: m.Key, EventKey: m.EventKey, CompLevel: m.CompLevel,
+			SetNumber: m.SetNumber, MatchNum: m.MatchNumber,
 		}
-
-		blue, ok := alliances["blue"].(map[string]any)
-		if !ok {
-			continue
-		}
-		red, ok := alliances["red"].(map[string]any)
-		if !ok {
-			continue
-		}
-
-		blueKeys, ok := blue["team_keys"].([]any)
-		if !ok || len(blueKeys) < 3 {
-			continue
-		}
-		redKeys, ok := red["team_keys"].([]any)
-		if !ok || len(redKeys) < 3 {
-			continue
-		}
-
-		eventKey, ok1 := item["event_key"].(string)
-		matchKey, ok2 := item["key"].(string)
-		matchNum, ok3 := item["match_number"].(float64)
-		if !ok1 || !ok2 || !ok3 {
-			continue
-		}
-
-		var match internal.Match
-		match.Blue1 = parseTeamKey(blueKeys[0])
-		match.Blue2 = parseTeamKey(blueKeys[1])
-		match.Blue3 = parseTeamKey(blueKeys[2])
-		match.Red1 = parseTeamKey(redKeys[0])
-		match.Red2 = parseTeamKey(redKeys[1])
-		match.Red3 = parseTeamKey(redKeys[2])
-		match.EventKey = eventKey
-		match.MatchKey = matchKey
-		match.MatchNum = int(matchNum)
-		if predicted, ok := item["predicted_time"].(float64); ok {
-			t := time.Unix(int64(predicted), 0)
+		r, b := m.Alliances.Red.TeamKeys, m.Alliances.Blue.TeamKeys
+		match.Red1, match.Red2, match.Red3 = teamAtStr(r, 0), teamAtStr(r, 1), teamAtStr(r, 2)
+		match.Blue1, match.Blue2, match.Blue3 = teamAtStr(b, 0), teamAtStr(b, 1), teamAtStr(b, 2)
+		if m.PredictedTime != nil {
+			t := time.Unix(*m.PredictedTime, 0)
 			match.PredictedTime = &t
 		}
-		if actual, ok := item["actual_time"].(float64); ok {
-			t := time.Unix(int64(actual), 0)
+		if m.ActualTime != nil {
+			t := time.Unix(*m.ActualTime, 0)
 			match.ActualTime = &t
 		}
 		list = append(list, match)
 	}
-
 	return list, nil
+}
+
+type tbaWebcast struct {
+	Type    string `json:"type"`
+	Channel string `json:"channel"`
+}
+
+type tbaEvent struct {
+	Key       string       `json:"key"`
+	StartDate *string      `json:"start_date"`
+	EndDate   *string      `json:"end_date"`
+	Webcasts  []tbaWebcast `json:"webcasts"`
+}
+
+func parseTBADate(s *string) *time.Time {
+	if s == nil {
+		return nil
+	}
+	t, err := time.Parse("2006-01-02", *s)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
+func FetchEventInfo(ctx context.Context, eventKey string) (start, end *time.Time, webcastsJSON string, err error) {
+	var event tbaEvent
+	if TESTING {
+		body, err := os.ReadFile("./example responses/2077events.json")
+		if err != nil {
+			return nil, nil, "", errors.New("Example response not found")
+		}
+		var events []tbaEvent
+		if err := json.Unmarshal(body, &events); err != nil {
+			return nil, nil, "", errors.New("Error decoding example response")
+		}
+		found := false
+		for _, e := range events {
+			if e.Key == eventKey {
+				event, found = e, true
+				break
+			}
+		}
+		if !found {
+			return nil, nil, "", ErrTBANotFound
+		}
+	} else {
+		res, err := tbaGet(ctx, "/event/"+eventKey, "")
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if err := json.Unmarshal(res.Body, &event); err != nil {
+			return nil, nil, "", errors.New("Error decoding TBA event: " + err.Error())
+		}
+	}
+
+	if event.Webcasts == nil {
+		event.Webcasts = []tbaWebcast{}
+	}
+	cast, err := json.Marshal(event.Webcasts)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return parseTBADate(event.StartDate), parseTBADate(event.EndDate), string(cast), nil
+}
+
+func FetchEventMatches(ctx context.Context, eventKey, etag string) (matches []internal.Match, newETag string, maxAge time.Duration, notModified bool, err error) {
+	if TESTING {
+		body, err := os.ReadFile("./example responses/" + eventKey + ".json")
+		if err != nil {
+			return nil, "", 0, false, errors.New("Example response not found")
+		}
+		sum := fmt.Sprintf("%x", sha1.Sum(body))
+		if sum == etag {
+			return nil, sum, 0, true, nil
+		}
+		matches, err = parseMatches(body)
+		return matches, sum, 0, false, err
+	}
+	res, err := tbaGet(ctx, "/event/"+eventKey+"/matches/simple", etag)
+	if err != nil {
+		return nil, "", 0, false, err
+	}
+	if res.NotModified {
+		return nil, etag, res.MaxAge, true, nil
+	}
+	matches, err = parseMatches(res.Body)
+	return matches, res.ETag, res.MaxAge, false, err
+}
+
+func teamAtStr(keys []string, i int) int {
+	if i >= len(keys) {
+		return 0
+	}
+	return parseTeamKey(keys[i])
 }
 
 func parseTeamKey(key any) int {
@@ -280,73 +351,4 @@ func parseTeamKey(key any) int {
 	}
 	teamNum, _ := strconv.Atoi(strings.TrimPrefix(keyStr, "frc"))
 	return teamNum
-}
-
-func GetStreams(teamInt int, eventKey string) ([]internal.Stream, error) {
-	type webcast struct {
-		Type    string `json:"type"`
-		Channel string `json:"channel"`
-	}
-	type event struct {
-		Key      string    `json:"key"`
-		Webcasts []webcast `json:"webcasts"`
-	}
-	var data []event
-	teamNumber := strconv.Itoa(teamInt)
-	if TESTING {
-		if teamNumber != "2077" {
-			return nil, errors.New("Team number must be 2077 when testing")
-		}
-		file, err := os.Open("./example responses/2077events.json")
-		if err != nil {
-			return nil, errors.New("Example response not found")
-		}
-		defer file.Close()
-
-		if err := json.NewDecoder(file).Decode(&data); err != nil {
-			return nil, errors.New("Error decoding example response")
-		}
-	} else {
-		req, err := http.NewRequest(http.MethodGet, TBA_API_URL+"/team/frc"+teamNumber+"/events/"+strconv.Itoa(time.Now().Year()), nil)
-		if err != nil {
-			return nil, errors.New("Error making TBA request: " + err.Error())
-		}
-
-		req.Header.Set("X-TBA-Auth-Key", TBA_API_KEY)
-
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, errors.New("Error sending TBA request: " + err.Error())
-		}
-		defer resp.Body.Close()
-
-		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-			return nil, errors.New("Error decoding TBA response: " + err.Error())
-		}
-	}
-
-	var list []internal.Stream
-	for _, item := range data {
-		if item.Key != eventKey {
-			continue
-		}
-
-		for _, cast := range item.Webcasts {
-			streamURL := cast.Channel
-			switch cast.Type {
-			case "youtube":
-				streamURL = "https://www.youtube.com/watch?v=" + cast.Channel
-			case "twitch":
-				streamURL = "https://www.twitch.tv/" + cast.Channel
-			}
-			list = append(list, internal.Stream{Name: cast.Type, URL: streamURL})
-		}
-		return list, nil
-	}
-
-	return list, nil
 }

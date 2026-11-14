@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"lasertracker_server/internal"
 
@@ -96,7 +97,8 @@ func CreateTables() error {
 
 	CREATE TABLE IF NOT EXISTS logs (
         group_key TEXT NOT NULL,
-        username TEXT NOT NULL,
+        requesting_user TEXT NOT NULL,
+		actioned_user TEXT NOT NULL DEFAULT '',
         action TEXT NOT NULL,
         timestamp TIMESTAMPTZ NOT NULL,
         CONSTRAINT fk_log_group FOREIGN KEY (group_key) REFERENCES groups(group_key) ON DELETE CASCADE
@@ -120,20 +122,28 @@ func CreateTables() error {
 		red_teams TEXT NOT NULL,
 		blue_teams TEXT NOT NULL,
 		predicted_time TIMESTAMPTZ,
-		actual_time TIMESTAMPTZ
+		actual_time TIMESTAMPTZ,
+		comp_level TEXT NOT NULL DEFAULT 'qm',
+		set_number INTEGER NOT NULL DEFAULT 1
 	);
 
-	CREATE TABLE IF NOT EXISTS alliances (
+	CREATE TABLE IF NOT EXISTS tracked_events (
 		event_key TEXT PRIMARY KEY,
-		alliances_json TEXT NOT NULL,
-		updated_at INTEGER NOT NULL
-	);
+		etag TEXT NOT NULL DEFAULT '',
+		last_polled TIMESTAMPTZ,
+		last_changed TIMESTAMPTZ,
+		next_poll_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		fail_count INTEGER NOT NULL DEFAULT 0,
+		start_date DATE,
+		end_date DATE,
+		webcasts_json TEXT NOT NULL DEFAULT '[]'
+	)
 	`
 	_, err := dbConnection.Exec(ctx, myevilschema)
 	return handleError(err)
 }
 
-func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string) error {
+func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string, requestingUser string) error {
 	if groupKey == "" {
 		var err error
 		groupKey, err = internal.GenerateRandomSecret(6)
@@ -150,26 +160,57 @@ func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string)
 	}
 
 	_, gcerr := dbConnection.Exec(ctx, groupCreatinator, groupInfo.GroupName, groupInfo.EventKey, groupInfo.TeamNumber, avatar, groupKey)
-	return handleError(gcerr)
+	if gcerr != nil {
+		return handleError(gcerr)
+	}
+
+	log := internal.LogEntry{
+		GroupKey:       groupKey,
+		RequestingUser: requestingUser,
+		Action:         "CREATE GROUP",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
+	return nil
 }
 
-func RemoveGroup(ctx context.Context, groupKey string) error {
+func RemoveGroup(ctx context.Context, groupKey string, requestingUser string) error {
 	query := `DELETE FROM groups WHERE group_key = $1`
 	cmdTag, err := dbConnection.Exec(ctx, query, groupKey)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 
+	log := internal.LogEntry{
+		GroupKey:       groupKey,
+		RequestingUser: requestingUser,
+		Action:         "REMOVE GROUP",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
-func ChangeGroupEventKey(ctx context.Context, groupKey string, newEventKey string) error {
+func ChangeGroupEventKey(ctx context.Context, groupKey string, newEventKey string, requestingUser string) error {
 	query := `UPDATE Groups SET event_key = $1 WHERE group_key = $2`
 	cmdTag, err := dbConnection.Exec(ctx, query, newEventKey, groupKey)
 
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+
+	log := internal.LogEntry{
+		GroupKey:       groupKey,
+		RequestingUser: requestingUser,
+		Action:         "CHANGE EVENT",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
 
 	return handleError(err)
 }
@@ -185,20 +226,40 @@ func AddMember(ctx context.Context, memberInfo internal.PrivateMember) error {
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 
 	_, err := dbConnection.Exec(ctx, query, memberInfo.GroupKey, username, memberInfo.DisplayName, memberInfo.PinHash, memberInfo.Job, memberInfo.Role, memberInfo.Location, adminInt, 1)
+
+	log := internal.LogEntry{
+		GroupKey:       memberInfo.GroupKey,
+		RequestingUser: memberInfo.Username,
+		Action:         "ADD MEMBER",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
-func RemoveMember(ctx context.Context, groupKey string, username string) error {
+func RemoveMember(ctx context.Context, groupKey string, username string, requestingUser string) error {
 	query := `DELETE FROM members WHERE group_key = $1 AND username = $2`
 	cmdTag, err := dbConnection.Exec(ctx, query, groupKey, username)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 
+	log := internal.LogEntry{
+		GroupKey:       groupKey,
+		RequestingUser: requestingUser,
+		ActionedUser:   username,
+		Action:         "REMOVE MEMBER",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
-func UpdateMember(ctx context.Context, newMemberData internal.PublicMember) error {
+func UpdateMember(ctx context.Context, newMemberData internal.PublicMember, requestingUser string) error {
 	query := `
 		UPDATE members 
 		SET display_name = $1, job = $2, location = $3, is_admin = $4 
@@ -217,10 +278,20 @@ func UpdateMember(ctx context.Context, newMemberData internal.PublicMember) erro
 		return ErrNotFound
 	}
 
+	log := internal.LogEntry{
+		GroupKey:       newMemberData.GroupKey,
+		RequestingUser: requestingUser,
+		ActionedUser:   newMemberData.Username,
+		Action:         "UPDATE MEMBER",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
-func ChangePin(ctx context.Context, request internal.PinChangeRequest) error {
+func ChangePin(ctx context.Context, request internal.PinChangeRequest, requestingUser string) error {
 	hashed := hashPinButCooler(request.NewPin)
 	query := `UPDATE members SET pin_hash = $1, token_ver = token_ver + 1 WHERE group_key = $2 AND username = $3`
 	cmdTag, err := dbConnection.Exec(ctx, query, hashed, request.GroupKey, request.Username)
@@ -228,28 +299,58 @@ func ChangePin(ctx context.Context, request internal.PinChangeRequest) error {
 		return ErrNotFound
 	}
 
+	log := internal.LogEntry{
+		GroupKey:       request.GroupKey,
+		RequestingUser: requestingUser,
+		ActionedUser:   request.Username,
+		Action:         "CHANGE PIN",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
-func ChangeRole(ctx context.Context, groupKey string, username string, newRole string) error {
+func ChangeRole(ctx context.Context, groupKey string, username string, newRole string, requestingUser string) error {
 	query := `UPDATE members SET role = $1 WHERE group_key = $2 AND username = $3`
 	cmdTag, err := dbConnection.Exec(ctx, query, newRole, groupKey, username)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 
+	log := internal.LogEntry{
+		GroupKey:       groupKey,
+		RequestingUser: requestingUser,
+		ActionedUser:   username,
+		Action:         "CHANGE MEMBER ROLE",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
-func AddBattery(ctx context.Context, batteryInfo internal.Battery) error {
+func AddBattery(ctx context.Context, batteryInfo internal.Battery, requestingUser string) error {
 	query := `INSERT INTO batteries (group_key, name, status, matches_used, notes, status_timestamp) 
 	          VALUES ($1, $2, $3, $4, $5, $6)`
 
 	_, err := dbConnection.Exec(ctx, query, batteryInfo.GroupKey, batteryInfo.Name, batteryInfo.Status, batteryInfo.MatchesUsed, batteryInfo.Notes, batteryInfo.Timestamp)
+
+	log := internal.LogEntry{
+		GroupKey:       batteryInfo.GroupKey,
+		RequestingUser: requestingUser,
+		Action:         "ADD BATTERY",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
-func UpdateBattery(ctx context.Context, battery internal.Battery) error {
+func UpdateBattery(ctx context.Context, battery internal.Battery, requestingUser string) error {
 	query := `
 		UPDATE batteries 
 		SET status = $1, matches_used = $2, notes = $3, status_timestamp = $4 
@@ -261,29 +362,47 @@ func UpdateBattery(ctx context.Context, battery internal.Battery) error {
 		return ErrNotFound
 	}
 
+	log := internal.LogEntry{
+		GroupKey:       battery.GroupKey,
+		RequestingUser: requestingUser,
+		Action:         "UPDATE BATTERY",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
-func RemoveBattery(ctx context.Context, groupKey, batteryName string) error {
+func RemoveBattery(ctx context.Context, groupKey string, batteryName string, requestingUser string) error {
 	query := `DELETE FROM batteries WHERE group_key = $1 AND name = $2`
 	cmdTag, err := dbConnection.Exec(ctx, query, groupKey, batteryName)
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 
+	log := internal.LogEntry{
+		GroupKey:       groupKey,
+		RequestingUser: requestingUser,
+		Action:         "REMOVE BATTERY",
+		Timestamp:      time.Now(),
+	}
+
+	AddLogEntry(ctx, log)
+
 	return handleError(err)
 }
 
 func AddLogEntry(ctx context.Context, entry internal.LogEntry) error {
-	query := `INSERT INTO logs (group_key, username, action, timestamp) VALUES ($1, $2, $3, $4)`
+	query := `INSERT INTO logs (group_key, requesting_user, actioned_user, action, timestamp) VALUES ($1, $2, $3, $4, $5)`
 
-	_, err := dbConnection.Exec(ctx, query, entry.GroupKey, entry.Username, entry.Action, entry.Timestamp)
+	_, err := dbConnection.Exec(ctx, query, entry.GroupKey, entry.RequestingUser, entry.ActionedUser, entry.Action, entry.Timestamp)
 
 	return handleError(err)
 }
 
 func GetAllLogs(ctx context.Context, groupKey string) ([]*internal.LogEntry, error) {
-	query := `SELECT group_key, username, action, timestamp FROM logs WHERE group_key = $1`
+	query := `SELECT group_key, requesting_user, actioned_user, action, timestamp FROM logs WHERE group_key = $1`
 	rows, err := dbConnection.Query(ctx, query, groupKey)
 	if err != nil {
 		return nil, handleError(err)
@@ -293,7 +412,7 @@ func GetAllLogs(ctx context.Context, groupKey string) ([]*internal.LogEntry, err
 	logs := make([]*internal.LogEntry, 0)
 	for rows.Next() {
 		var log internal.LogEntry
-		if err := rows.Scan(&log.GroupKey, &log.Username, &log.Action, &log.Timestamp); err != nil {
+		if err := rows.Scan(&log.GroupKey, &log.RequestingUser, &log.ActionedUser, &log.Action, &log.Timestamp); err != nil {
 			return nil, handleError(err)
 		}
 		logs = append(logs, &log)
@@ -428,10 +547,12 @@ func GetMemberTokenVer(ctx context.Context, groupKey string, username string) (i
 func GetTeamMatches(ctx context.Context, teamInt int, eventKey string) ([]*internal.Match, error) {
 	// Ordered by schedule, since match_number restarts at 1 for each comp level (qm1, sf1m1, f1m1)
 	query := `
-		SELECT event_key, match_key, match_number, red_teams, blue_teams, predicted_time, actual_time 
+		SELECT event_key, match_key, match_number, red_teams, blue_teams, predicted_time, actual_time, comp_level, set_number
 		FROM matches 
 		WHERE event_key = $1 
-		ORDER BY predicted_time ASC NULLS LAST, match_key ASC
+		ORDER BY CASE comp_level WHEN 'qm' THEN 1 WHEN 'ef' THEN 2 WHEN 'qf' THEN 3
+		WHEN 'sf' THEN 4 WHEN 'f' THEN 5 ELSE 6 END,
+    	set_number, match_number
 	`
 
 	rows, err := dbConnection.Query(ctx, query, eventKey)
@@ -500,43 +621,199 @@ func GetTeamMatches(ctx context.Context, teamInt int, eventKey string) ([]*inter
 	return matches, nil
 }
 
-func AddMatch(ctx context.Context, match internal.Match) error {
+func EnsureTrackedEvent(ctx context.Context, eventKey string) error {
+	_, err := dbConnection.Exec(ctx, `INSERT INTO tracked_events (event_key) VALUES ($1) ON CONFLICT DO NOTHING`, eventKey)
+	return handleError(err)
+}
+
+func EnsureTrackedEventsForGroups(ctx context.Context) error {
+	_, err := dbConnection.Exec(ctx, `
+		INSERT INTO tracked_events (event_key)
+		SELECT DISTINCT event_key FROM groups WHERE event_key <> ''
+		ON CONFLICT DO NOTHING
+	`)
+	return handleError(err)
+}
+
+func MarkDueNow(ctx context.Context, eventKey string) error {
+	_, err := dbConnection.Exec(ctx, `UPDATE tracked_events SET next_poll_at = now() WHERE event_key = $1`, eventKey)
+	return handleError(err)
+}
+
+func ClaimDueEvents(ctx context.Context, limit int) ([]internal.TrackedEvent, error) {
 	query := `
-		INSERT INTO matches (event_key, match_key, match_number, red_teams, blue_teams, predicted_time, actual_time) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		UPDATE tracked_events SET next_poll_at = now() + interval '2 minutes'
+		WHERE event_key IN (
+			SELECT t.event_key FROM tracked_events t
+			WHERE t.next_poll_at <= now()
+			AND EXISTS (SELECT 1 FROM groups g WHERE g.event_key = t.event_key)
+			ORDER BY t.next_poll_at
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING event_key, etag, last_polled, last_changed, next_poll_at, fail_count, start_date, end_date, webcasts_json
+	`
+
+	rows, err := dbConnection.Query(ctx, query, limit)
+	if err != nil {
+		return nil, handleError(err)
+	}
+	defer rows.Close()
+
+	events := make([]internal.TrackedEvent, 0)
+	for rows.Next() {
+		var ev internal.TrackedEvent
+		if err := rows.Scan(&ev.EventKey, &ev.ETag, &ev.LastPolled, &ev.LastChanged, &ev.NextPollAt, &ev.FailCount, &ev.StartDate, &ev.EndDate, &ev.WebcastsJSON); err != nil {
+			return nil, handleError(err)
+		}
+		events = append(events, ev)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, handleError(err)
+	}
+
+	return events, nil
+}
+
+func RecordPoll(ctx context.Context, eventKey, etag string, changed bool, next time.Time, failCount int) error {
+	query := `
+		UPDATE tracked_events SET
+			etag = CASE WHEN $2 <> '' THEN $2 ELSE etag END,
+			last_polled = now(),
+			last_changed = CASE WHEN $3 THEN now() ELSE last_changed END,
+			next_poll_at = $4,
+			fail_count = $5
+		WHERE event_key = $1
+	`
+	_, err := dbConnection.Exec(ctx, query, eventKey, etag, changed, next, failCount)
+	return handleError(err)
+}
+
+func SaveEventInfo(ctx context.Context, eventKey string, start, end *time.Time, webcastsJSON string) error {
+	query := `UPDATE tracked_events SET start_date = $2, end_date = $3, webcasts_json = $4 WHERE event_key = $1`
+	_, err := dbConnection.Exec(ctx, query, eventKey, start, end, webcastsJSON)
+	return handleError(err)
+}
+
+func GetWebcasts(ctx context.Context, eventKey string) ([]internal.Stream, error) {
+	var webcastsJSON string
+	err := dbConnection.QueryRow(ctx, `SELECT webcasts_json FROM tracked_events WHERE event_key = $1`, eventKey).Scan(&webcastsJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return []internal.Stream{}, nil
+	}
+	if err != nil {
+		return nil, handleError(err)
+	}
+
+	var casts []struct {
+		Type    string `json:"type"`
+		Channel string `json:"channel"`
+	}
+	if err := json.Unmarshal([]byte(webcastsJSON), &casts); err != nil {
+		return nil, fmt.Errorf("%w: bad webcasts_json for %s: %v", ErrDatabase, eventKey, err)
+	}
+
+	streams := make([]internal.Stream, 0, len(casts))
+	for _, cast := range casts {
+		streamURL := cast.Channel
+		switch cast.Type {
+		case "youtube":
+			streamURL = "https://www.youtube.com/embed/" + cast.Channel
+		case "twitch":
+			streamURL = "https://player.twitch.tv/?channel=" + cast.Channel + "&parent=lasertracker.laserrobotics.org"
+		}
+		streams = append(streams, internal.Stream{Name: cast.Type, URL: streamURL, Type: cast.Channel})
+	}
+
+	return streams, nil
+}
+
+func GroupsAtEvent(ctx context.Context, eventKey string) ([]internal.GroupRef, error) {
+	rows, err := dbConnection.Query(ctx, `SELECT group_key, team_number FROM groups WHERE event_key = $1`, eventKey)
+	if err != nil {
+		return nil, handleError(err)
+	}
+	defer rows.Close()
+
+	groups := make([]internal.GroupRef, 0)
+	for rows.Next() {
+		var g internal.GroupRef
+		if err := rows.Scan(&g.GroupKey, &g.TeamNumber); err != nil {
+			return nil, handleError(err)
+		}
+		groups = append(groups, g)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, handleError(err)
+	}
+
+	return groups, nil
+}
+
+func UpsertMatches(ctx context.Context, matches []internal.Match) ([]string, error) {
+	query := `
+		INSERT INTO matches (event_key, match_key, match_number, red_teams, blue_teams, predicted_time, actual_time, comp_level, set_number)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (match_key) DO UPDATE SET
 			event_key = EXCLUDED.event_key,
 			match_number = EXCLUDED.match_number,
 			red_teams = EXCLUDED.red_teams,
 			blue_teams = EXCLUDED.blue_teams,
 			predicted_time = EXCLUDED.predicted_time,
-			actual_time = EXCLUDED.actual_time
+			actual_time = EXCLUDED.actual_time,
+			comp_level = EXCLUDED.comp_level,
+			set_number = EXCLUDED.set_number
+		WHERE (matches.red_teams, matches.blue_teams, matches.predicted_time, matches.actual_time,
+			matches.match_number, matches.comp_level, matches.set_number)
+			IS DISTINCT FROM
+			(EXCLUDED.red_teams, EXCLUDED.blue_teams, EXCLUDED.predicted_time,
+			EXCLUDED.actual_time, EXCLUDED.match_number, EXCLUDED.comp_level, EXCLUDED.set_number)
+		RETURNING match_key
 	`
 
-	redList := []string{"frc" + strconv.Itoa(match.Red1), "frc" + strconv.Itoa(match.Red2), "frc" + strconv.Itoa(match.Red3)}
-	blueList := []string{"frc" + strconv.Itoa(match.Blue1), "frc" + strconv.Itoa(match.Blue2), "frc" + strconv.Itoa(match.Blue3)}
-
-	redJSON, err := json.Marshal(redList)
+	tx, err := dbConnection.Begin(ctx)
 	if err != nil {
-		return err
+		return nil, handleError(err)
+	}
+	defer tx.Rollback(ctx)
+
+	changedKeys := make([]string, 0)
+	for _, match := range matches {
+		redJSON, err := json.Marshal(teamKeyList(match.Red1, match.Red2, match.Red3))
+		if err != nil {
+			return nil, err
+		}
+		blueJSON, err := json.Marshal(teamKeyList(match.Blue1, match.Blue2, match.Blue3))
+		if err != nil {
+			return nil, err
+		}
+
+		var key string
+		err = tx.QueryRow(ctx, query, match.EventKey, match.MatchKey, match.MatchNum, string(redJSON), string(blueJSON), match.PredictedTime, match.ActualTime, match.CompLevel, match.SetNumber).Scan(&key)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, handleError(err)
+		}
+		changedKeys = append(changedKeys, key)
 	}
 
-	blueJSON, err := json.Marshal(blueList)
-	if err != nil {
-		return err
+	if err := tx.Commit(ctx); err != nil {
+		return nil, handleError(err)
 	}
 
-	_, err = dbConnection.Exec(ctx, query, match.EventKey, match.MatchKey, match.MatchNum, string(redJSON), string(blueJSON), match.PredictedTime, match.ActualTime)
-	return handleError(err)
+	return changedKeys, nil
 }
 
-func IsEventTracked(ctx context.Context, eventKey string) (bool, error) {
-	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM matches WHERE event_key = $1)`
-
-	err := dbConnection.QueryRow(ctx, query, eventKey).Scan(&exists)
-	if err != nil {
-		return false, handleError(err)
+func teamKeyList(teams ...int) []string {
+	list := []string{}
+	for _, t := range teams {
+		if t != 0 {
+			list = append(list, "frc"+strconv.Itoa(t))
+		}
 	}
-	return exists, nil
+	return list
 }

@@ -104,6 +104,10 @@ func (c *Client) handleInboundMessage(ctx context.Context, hub *Hub, msg interna
 		err = c.handleAddBattery(ctx, hub, msg.Payload)
 	case "REMOVE_BATTERY":
 		err = c.handleRemoveBattery(ctx, hub, msg.Payload)
+	case "REMOVE_MEMBER":
+		err = c.handleRemoveMember(ctx, hub, msg.Payload)
+	case "CHANGE_MEMBER_ROLE":
+		err = c.handleChangeMemberRole(ctx, hub, msg.Payload)
 	case "SYNC":
 		if err = c.handleDataSync(ctx, hub, msg.RequestID); err == nil {
 			return
@@ -161,12 +165,17 @@ func (c *Client) handleUpdateMember(ctx context.Context, hub *Hub, rawPayload js
 		payload.IsAdmin = target.IsAdmin
 	}
 
-	err = actions.UpdateMember(ctx, payload)
+	err = actions.UpdateMember(ctx, payload, sender.Username)
 	if err != nil {
 		return err
 	}
 
-	updatedPayload, _ := json.Marshal(payload)
+	updated, err := actions.GetMember(ctx, c.GroupKey, payload.Username)
+	if err != nil {
+		return err
+	}
+
+	updatedPayload, _ := json.Marshal(updated)
 
 	hub.Broadcast(internal.Message{GroupKey: c.GroupKey, Timestamp: time.Now(), InfoType: "MEMBER_UPDATED", Payload: updatedPayload})
 	return nil
@@ -190,7 +199,7 @@ func (c *Client) handleUpdateBattery(ctx context.Context, hub *Hub, rawPayload j
 		return err
 	}
 
-	err = actions.UpdateBattery(ctx, payload)
+	err = actions.UpdateBattery(ctx, payload, c.Username)
 	if err != nil {
 		return err
 	}
@@ -224,7 +233,7 @@ func (c *Client) handleUpdateMemberPin(ctx context.Context, rawPayload json.RawM
 		return errForbidden
 	}
 
-	err = actions.ChangePin(ctx, payload)
+	err = actions.ChangePin(ctx, payload, c.Username)
 	if err != nil {
 		return err
 	}
@@ -246,7 +255,7 @@ func (c *Client) handleUpdateGroupEventKey(ctx context.Context, hub *Hub, rawPay
 		return errForbidden
 	}
 
-	if err := actions.ChangeGroupEventKey(ctx, payload.GroupKey, payload.EventKey); err != nil {
+	if err := actions.ChangeGroupEventKey(ctx, payload.GroupKey, payload.EventKey, sender.Username); err != nil {
 		return err
 	}
 
@@ -268,7 +277,7 @@ func (c *Client) handleAddBattery(ctx context.Context, hub *Hub, rawPayload json
 		return err
 	}
 
-	if err := actions.AddBattery(ctx, payload); err != nil {
+	if err := actions.AddBattery(ctx, payload, c.Username); err != nil {
 		return err
 	}
 
@@ -291,7 +300,7 @@ func (c *Client) handleRemoveBattery(ctx context.Context, hub *Hub, rawPayload j
 		return err
 	}
 
-	if err := actions.RemoveBattery(ctx, payload.GroupKey, payload.Name); err != nil {
+	if err := actions.RemoveBattery(ctx, payload.GroupKey, payload.Name, c.Username); err != nil {
 		return err
 	}
 
@@ -325,7 +334,7 @@ func (c *Client) handleDataSync(ctx context.Context, hub *Hub, requestID string)
 	if err != nil {
 		return err
 	}
-	streams, err := actions.GetStreams(group.TeamNumber, group.EventKey)
+	streams, err := actions.GetWebcasts(ctx, group.EventKey)
 	if err != nil {
 		return err
 	}
@@ -353,5 +362,71 @@ func (c *Client) handleDataSync(ctx context.Context, hub *Hub, requestID string)
 	}
 
 	hub.SendTo(c, response)
+	return nil
+}
+
+func (c *Client) handleRemoveMember(ctx context.Context, hub *Hub, rawPayload json.RawMessage) error {
+	var payload internal.PublicMember
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		return errInvalidPayload(err)
+	}
+
+	payload.GroupKey = c.GroupKey
+
+	sender, err := actions.GetMember(ctx, c.GroupKey, c.Username)
+	if err != nil {
+		return err
+	}
+
+	target, err := actions.GetMember(ctx, c.GroupKey, payload.Username)
+	if err != nil {
+		return err
+	}
+
+	isSelf := c.Username == payload.Username
+	if !isSelf && !sender.IsAdmin {
+		return errForbidden
+	}
+
+	if err := actions.RemoveMember(ctx, payload.GroupKey, payload.Username, sender.Username); err != nil {
+		return err
+	}
+
+	updatedPayload, _ := json.Marshal(target)
+	hub.Broadcast(internal.Message{GroupKey: c.GroupKey, Timestamp: time.Now(), InfoType: "MEMBER_REMOVED", Payload: updatedPayload})
+	return nil
+}
+
+func (c *Client) handleChangeMemberRole(ctx context.Context, hub *Hub, rawPayload json.RawMessage) error {
+	var payload internal.PublicMember
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		return errInvalidPayload(err)
+	}
+
+	payload.GroupKey = c.GroupKey
+
+	sender, err := actions.GetMember(ctx, c.GroupKey, c.Username)
+	if err != nil {
+		return err
+	}
+	if !sender.IsAdmin {
+		return errForbidden
+	}
+
+	if _, err = actions.GetMember(ctx, c.GroupKey, payload.Username); err != nil {
+		return err
+	}
+
+	if err := actions.ChangeRole(ctx, payload.GroupKey, payload.Username, payload.Role, sender.Username); err != nil {
+		return err
+	}
+
+	updated, err := actions.GetMember(ctx, c.GroupKey, payload.Username)
+	if err != nil {
+		return err
+	}
+
+	updatedPayload, _ := json.Marshal(updated)
+	hub.Broadcast(internal.Message{GroupKey: c.GroupKey, Timestamp: time.Now(), InfoType: "MEMBER_ROLE_CHANGED", Payload: updatedPayload})
 	return nil
 }

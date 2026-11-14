@@ -219,7 +219,7 @@ func createGroupHandler() http.HandlerFunc {
 		ng.GroupKey = groupKey
 		ng.AvatarImage, _ = actions.TeamAvatar(teamNumber)
 
-		if err := actions.CreateGroup(ctx, ng, groupKey); err != nil {
+		if err := actions.CreateGroup(ctx, ng, groupKey, username); err != nil {
 			if errors.Is(err, actions.ErrAlreadyExists) {
 				http.Error(w, "Group already exists", http.StatusConflict)
 				return
