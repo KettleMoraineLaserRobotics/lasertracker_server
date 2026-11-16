@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Info struct {
@@ -191,6 +192,11 @@ func createGroupHandler() http.HandlerFunc {
 
 		if err := dec.Decode(&struct{}{}); err != io.EOF {
 			http.Error(w, "Request body must only contain a single JSON object", http.StatusBadRequest)
+			return
+		}
+
+		if n := utf8.RuneCountInString(req.Pin); n < 1 || n > 4 {
+			http.Error(w, "Invalid pin", http.StatusBadRequest)
 			return
 		}
 
@@ -380,16 +386,14 @@ func addMemberHandler(hub *ws.Hub) http.HandlerFunc {
 		}
 		json.NewEncoder(w).Encode(response)
 
-		payload := map[string]any{
-			"member_info": map[string]any{
-				"group_key":    nm.GroupKey,
-				"username":     nm.Username,
-				"display_name": nm.DisplayName,
-				"location":     nm.Location,
-				"job":          nm.Job,
-				"role":         nm.Role,
-				"is_admin":     nm.IsAdmin,
-			},
+		payload := internal.PublicMember{
+			GroupKey:    nm.GroupKey,
+			Username:    nm.Username,
+			DisplayName: nm.DisplayName,
+			Location:    nm.Location,
+			Job:         nm.Job,
+			Role:        nm.Role,
+			IsAdmin:     nm.IsAdmin,
 		}
 
 		payloadBytes, err := json.Marshal(payload)
@@ -426,10 +430,16 @@ func cors(next http.HandlerFunc) http.HandlerFunc {
 
 func InitHTTPServer(ctx context.Context, hub *ws.Hub) error {
 	port := strconv.Itoa(internal.GetConfig().Port)
+	authLimit := newRateLimiter(6*time.Second, 5)
+	tbaLimit := newRateLimiter(2*time.Second, 10)
+	tbaCache := newResponseCache()
+
 	http.HandleFunc("GET /info", cors(infoHandler()))
-	http.HandleFunc("POST /account", cors(addMemberHandler(hub)))
-	http.HandleFunc("POST /group", cors(createGroupHandler()))
-	http.HandleFunc("POST /login", cors(loginHandler()))
+	http.HandleFunc("POST /account", cors(authLimit.middleware(addMemberHandler(hub))))
+	http.HandleFunc("POST /group", cors(authLimit.middleware(createGroupHandler())))
+	http.HandleFunc("POST /login", cors(authLimit.middleware(loginHandler())))
+	http.HandleFunc("GET /tba/team/{number}", cors(tbaLimit.middleware(teamInfoHandler(tbaCache))))
+	http.HandleFunc("GET /tba/team/{number}/events", cors(tbaLimit.middleware(teamEventsHandler(tbaCache))))
 	http.HandleFunc("GET /ws", cors(wsHandler(hub)))
 
 	server := &http.Server{

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 )
@@ -165,6 +166,16 @@ func (c *Client) handleUpdateMember(ctx context.Context, hub *Hub, rawPayload js
 		payload.IsAdmin = target.IsAdmin
 	}
 
+	if target.IsAdmin && !payload.IsAdmin {
+		if err := c.requireAnotherAdmin(ctx); err != nil {
+			return err
+		}
+	}
+
+	if isSelf && payload.IsAdmin == false {
+		return errForbidden
+	}
+
 	err = actions.UpdateMember(ctx, payload, sender.Username)
 	if err != nil {
 		return err
@@ -233,6 +244,10 @@ func (c *Client) handleUpdateMemberPin(ctx context.Context, rawPayload json.RawM
 		return errForbidden
 	}
 
+	if n := utf8.RuneCountInString(payload.NewPin); n < 1 || n > 4 {
+		return errInvalidValue("pin must be 1 to 4 characters")
+	}
+
 	err = actions.ChangePin(ctx, payload, c.Username)
 	if err != nil {
 		return err
@@ -255,13 +270,22 @@ func (c *Client) handleUpdateGroupEventKey(ctx context.Context, hub *Hub, rawPay
 		return errForbidden
 	}
 
+	if n := utf8.RuneCountInString(payload.EventKey); n < 1 || n > 20 {
+		return errInvalidValue("event_key must be 1 to 20 characters")
+	}
+
 	if err := actions.ChangeGroupEventKey(ctx, payload.GroupKey, payload.EventKey, sender.Username); err != nil {
 		return err
 	}
 
 	eventsync.RegisterEventInBackground(payload.EventKey)
 
-	updatedPayload, _ := json.Marshal(payload)
+	group, err := actions.GetGroup(ctx, c.GroupKey)
+	if err != nil {
+		return err
+	}
+
+	updatedPayload, _ := json.Marshal(group)
 	hub.Broadcast(internal.Message{GroupKey: c.GroupKey, Timestamp: time.Now(), InfoType: "GROUP_EVENT_KEY_UPDATED", Payload: updatedPayload})
 	return nil
 }
@@ -275,6 +299,10 @@ func (c *Client) handleAddBattery(ctx context.Context, hub *Hub, rawPayload json
 	payload.GroupKey = c.GroupKey
 	if _, err := actions.GetMember(ctx, c.GroupKey, c.Username); err != nil {
 		return err
+	}
+
+	if n := utf8.RuneCountInString(payload.Name); n < 1 || n > 32 {
+		return errInvalidValue("battery name must be 1 to 32 characters")
 	}
 
 	if err := actions.AddBattery(ctx, payload, c.Username); err != nil {
@@ -384,13 +412,21 @@ func (c *Client) handleRemoveMember(ctx context.Context, hub *Hub, rawPayload js
 	}
 
 	isSelf := c.Username == payload.Username
-	if !isSelf && !sender.IsAdmin {
+	if (!isSelf && !sender.IsAdmin) || (isSelf && sender.IsAdmin) {
 		return errForbidden
+	}
+
+	if target.IsAdmin {
+		if err := c.requireAnotherAdmin(ctx); err != nil {
+			return err
+		}
 	}
 
 	if err := actions.RemoveMember(ctx, payload.GroupKey, payload.Username, sender.Username); err != nil {
 		return err
 	}
+
+	hub.Kick(c.GroupKey, payload.Username, c)
 
 	updatedPayload, _ := json.Marshal(target)
 	hub.Broadcast(internal.Message{GroupKey: c.GroupKey, Timestamp: time.Now(), InfoType: "MEMBER_REMOVED", Payload: updatedPayload})
@@ -428,5 +464,16 @@ func (c *Client) handleChangeMemberRole(ctx context.Context, hub *Hub, rawPayloa
 
 	updatedPayload, _ := json.Marshal(updated)
 	hub.Broadcast(internal.Message{GroupKey: c.GroupKey, Timestamp: time.Now(), InfoType: "MEMBER_ROLE_CHANGED", Payload: updatedPayload})
+	return nil
+}
+
+func (c *Client) requireAnotherAdmin(ctx context.Context) error {
+	admins, err := actions.CountAdmins(ctx, c.GroupKey)
+	if err != nil {
+		return err
+	}
+	if admins <= 1 {
+		return errLastAdmin
+	}
 	return nil
 }

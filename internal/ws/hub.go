@@ -120,3 +120,13 @@ func (h *Hub) evict(c *Client) {
 func (h *Hub) SendTo(c *Client, data []byte) {
 	h.direct <- directMessage{client: c, data: data}
 }
+
+func (h *Hub) Kick(groupKey string, username string, except *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for client := range h.groups[groupKey] {
+		if client.Username == username && client != except {
+			h.evict(client)
+		}
+	}
+}

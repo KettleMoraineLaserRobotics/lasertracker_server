@@ -2,13 +2,10 @@ package actions
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,10 +13,9 @@ import (
 	"lasertracker_server/internal"
 )
 
-const TBA_API_URL = "https://www.thebluealliance.com/api/v3"
+var TBA_API_URL = internal.GetConfig().TBAAPIURL
 
 var TBA_API_KEY = internal.GetConfig().TBAAPIKey
-var TESTING = internal.GetConfig().IsTesting
 
 var tbaClient = &http.Client{Timeout: 10 * time.Second}
 
@@ -93,24 +89,8 @@ func tbaGetJSON(ctx context.Context, path string, out any) error {
 
 func TeamName(teamInt int) (string, error) {
 	var data map[string]any
-	teamNumber := strconv.Itoa(teamInt)
-	if TESTING {
-		if teamNumber != "2077" {
-			return "", errors.New("Team number must be 2077 when testing")
-		}
-		file, err := os.Open("./example responses/2077info.json")
-		if err != nil {
-			return "", errors.New("Example response not found")
-		}
-		defer file.Close()
-
-		if err := json.NewDecoder(file).Decode(&data); err != nil {
-			return "", errors.New("Error decoding example response")
-		}
-	} else {
-		if err := tbaGetJSON(context.Background(), "/team/frc"+teamNumber, &data); err != nil {
-			return "", err
-		}
+	if err := tbaGetJSON(context.Background(), "/team/frc"+strconv.Itoa(teamInt), &data); err != nil {
+		return "", err
 	}
 
 	teamName := "team name here plz fix :("
@@ -122,24 +102,8 @@ func TeamName(teamInt int) (string, error) {
 
 func TeamAvatar(teamInt int) (string, error) {
 	var data []map[string]any
-	teamNumber := strconv.Itoa(teamInt)
-	if TESTING {
-		if teamNumber != "2077" {
-			return "", errors.New("Team number must be 2077 when testing")
-		}
-		file, err := os.Open("./example responses/2077media.json")
-		if err != nil {
-			return "", errors.New("Example response not found")
-		}
-		defer file.Close()
-
-		if err := json.NewDecoder(file).Decode(&data); err != nil {
-			return "", errors.New("Error decoding example response")
-		}
-	} else {
-		if err := tbaGetJSON(context.Background(), "/team/frc"+teamNumber+"/media/"+strconv.Itoa(time.Now().Year()), &data); err != nil {
-			return "", err
-		}
+	if err := tbaGetJSON(context.Background(), "/team/frc"+strconv.Itoa(teamInt)+"/media/"+strconv.Itoa(time.Now().Year()), &data); err != nil {
+		return "", err
 	}
 
 	for _, item := range data {
@@ -170,24 +134,8 @@ func GetTeamInfo(teamInt int) (map[string]string, error) {
 
 func GetTeamEvents(teamInt int) ([]map[string]string, error) {
 	var data []map[string]any
-	teamNumber := strconv.Itoa(teamInt)
-	if TESTING {
-		if teamNumber != "2077" {
-			return nil, errors.New("Team number must be 2077 when testing")
-		}
-		file, err := os.Open("./example responses/2077events.json")
-		if err != nil {
-			return nil, errors.New("Example response not found")
-		}
-		defer file.Close()
-
-		if err := json.NewDecoder(file).Decode(&data); err != nil {
-			return nil, errors.New("Error decoding example response")
-		}
-	} else {
-		if err := tbaGetJSON(context.Background(), "/team/frc"+teamNumber+"/events/"+strconv.Itoa(time.Now().Year()), &data); err != nil {
-			return nil, err
-		}
+	if err := tbaGetJSON(context.Background(), "/team/frc"+strconv.Itoa(teamInt)+"/events/"+strconv.Itoa(time.Now().Year()), &data); err != nil {
+		return nil, err
 	}
 
 	var list []map[string]string
@@ -274,33 +222,12 @@ func parseTBADate(s *string) *time.Time {
 
 func FetchEventInfo(ctx context.Context, eventKey string) (start, end *time.Time, webcastsJSON string, err error) {
 	var event tbaEvent
-	if TESTING {
-		body, err := os.ReadFile("./example responses/2077events.json")
-		if err != nil {
-			return nil, nil, "", errors.New("Example response not found")
-		}
-		var events []tbaEvent
-		if err := json.Unmarshal(body, &events); err != nil {
-			return nil, nil, "", errors.New("Error decoding example response")
-		}
-		found := false
-		for _, e := range events {
-			if e.Key == eventKey {
-				event, found = e, true
-				break
-			}
-		}
-		if !found {
-			return nil, nil, "", ErrTBANotFound
-		}
-	} else {
-		res, err := tbaGet(ctx, "/event/"+eventKey, "")
-		if err != nil {
-			return nil, nil, "", err
-		}
-		if err := json.Unmarshal(res.Body, &event); err != nil {
-			return nil, nil, "", errors.New("Error decoding TBA event: " + err.Error())
-		}
+	res, err := tbaGet(ctx, "/event/"+eventKey, "")
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if err := json.Unmarshal(res.Body, &event); err != nil {
+		return nil, nil, "", errors.New("Error decoding TBA event: " + err.Error())
 	}
 
 	if event.Webcasts == nil {
@@ -314,18 +241,6 @@ func FetchEventInfo(ctx context.Context, eventKey string) (start, end *time.Time
 }
 
 func FetchEventMatches(ctx context.Context, eventKey, etag string) (matches []internal.Match, newETag string, maxAge time.Duration, notModified bool, err error) {
-	if TESTING {
-		body, err := os.ReadFile("./example responses/" + eventKey + ".json")
-		if err != nil {
-			return nil, "", 0, false, errors.New("Example response not found")
-		}
-		sum := fmt.Sprintf("%x", sha1.Sum(body))
-		if sum == etag {
-			return nil, sum, 0, true, nil
-		}
-		matches, err = parseMatches(body)
-		return matches, sum, 0, false, err
-	}
 	res, err := tbaGet(ctx, "/event/"+eventKey+"/matches/simple", etag)
 	if err != nil {
 		return nil, "", 0, false, err

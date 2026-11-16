@@ -12,11 +12,16 @@ func (e *wsError) Error() string { return e.Code + ": " + e.Message }
 
 var (
 	errForbidden = &wsError{"forbidden", "you don't have permission to do that"}
+	errLastAdmin = &wsError{"forbidden", "a group needs at least one admin"}
 )
 
 func errInvalidPayload(err error) error {
 	log.Printf("invalid payload: %v", err)
 	return &wsError{"invalid_payload", "payload could not be parsed"}
+}
+
+func errInvalidValue(msg string) error {
+	return &wsError{"invalid_payload", msg}
 }
 
 func toWSError(err error) *wsError {

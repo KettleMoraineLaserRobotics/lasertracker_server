@@ -28,12 +28,16 @@ var dbConnection, _ = InitDBConn()
 
 // There was an import loop with auth so I just remade hashPin here :)
 // Once again, there is most definitely a better solution
-func hashPinButCooler(pin string) string {
+func hashPinButCooler(pin string) (string, error) {
+	if len(pin) > 72 {
+		return "", fmt.Errorf("%w: pin too long", ErrDatabase)
+	}
+
 	hashword, err := bcrypt.GenerateFromPassword([]byte(pin), bcrypt.DefaultCost)
 	if err != nil {
-		fmt.Println(err)
+		return "", fmt.Errorf("%w: %v", ErrDatabase, err)
 	}
-	return string(hashword)
+	return string(hashword), nil
 }
 
 func handleError(err error) error {
@@ -171,7 +175,7 @@ func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string,
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
 	return nil
 }
@@ -179,26 +183,23 @@ func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string,
 func RemoveGroup(ctx context.Context, groupKey string, requestingUser string) error {
 	query := `DELETE FROM groups WHERE group_key = $1`
 	cmdTag, err := dbConnection.Exec(ctx, query, groupKey)
+	if err != nil {
+		return handleError(err)
+	}
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 
-	log := internal.LogEntry{
-		GroupKey:       groupKey,
-		RequestingUser: requestingUser,
-		Action:         "REMOVE GROUP",
-		Timestamp:      time.Now(),
-	}
-
-	AddLogEntry(ctx, log)
-
-	return handleError(err)
+	return nil
 }
 
 func ChangeGroupEventKey(ctx context.Context, groupKey string, newEventKey string, requestingUser string) error {
 	query := `UPDATE Groups SET event_key = $1 WHERE group_key = $2`
 	cmdTag, err := dbConnection.Exec(ctx, query, newEventKey, groupKey)
 
+	if err != nil {
+		return handleError(err)
+	}
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -210,9 +211,9 @@ func ChangeGroupEventKey(ctx context.Context, groupKey string, newEventKey strin
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
 }
 
 func AddMember(ctx context.Context, memberInfo internal.PrivateMember) error {
@@ -226,6 +227,9 @@ func AddMember(ctx context.Context, memberInfo internal.PrivateMember) error {
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 
 	_, err := dbConnection.Exec(ctx, query, memberInfo.GroupKey, username, memberInfo.DisplayName, memberInfo.PinHash, memberInfo.Job, memberInfo.Role, memberInfo.Location, adminInt, 1)
+	if err != nil {
+		return handleError(err)
+	}
 
 	log := internal.LogEntry{
 		GroupKey:       memberInfo.GroupKey,
@@ -234,14 +238,17 @@ func AddMember(ctx context.Context, memberInfo internal.PrivateMember) error {
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
 }
 
 func RemoveMember(ctx context.Context, groupKey string, username string, requestingUser string) error {
 	query := `DELETE FROM members WHERE group_key = $1 AND username = $2`
 	cmdTag, err := dbConnection.Exec(ctx, query, groupKey, username)
+	if err != nil {
+		return handleError(err)
+	}
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -254,9 +261,9 @@ func RemoveMember(ctx context.Context, groupKey string, username string, request
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
 }
 
 func UpdateMember(ctx context.Context, newMemberData internal.PublicMember, requestingUser string) error {
@@ -274,6 +281,9 @@ func UpdateMember(ctx context.Context, newMemberData internal.PublicMember, requ
 	}
 
 	cmdTag, err := dbConnection.Exec(ctx, query, newMemberData.DisplayName, newMemberData.Job, newMemberData.Location, adminInt, newMemberData.GroupKey, newMemberData.Username)
+	if err != nil {
+		return handleError(err)
+	}
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -286,15 +296,21 @@ func UpdateMember(ctx context.Context, newMemberData internal.PublicMember, requ
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
 }
 
 func ChangePin(ctx context.Context, request internal.PinChangeRequest, requestingUser string) error {
-	hashed := hashPinButCooler(request.NewPin)
+	hashed, err := hashPinButCooler(request.NewPin)
+	if err != nil {
+		return err
+	}
 	query := `UPDATE members SET pin_hash = $1, token_ver = token_ver + 1 WHERE group_key = $2 AND username = $3`
 	cmdTag, err := dbConnection.Exec(ctx, query, hashed, request.GroupKey, request.Username)
+	if err != nil {
+		return handleError(err)
+	}
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -307,14 +323,17 @@ func ChangePin(ctx context.Context, request internal.PinChangeRequest, requestin
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
 }
 
 func ChangeRole(ctx context.Context, groupKey string, username string, newRole string, requestingUser string) error {
 	query := `UPDATE members SET role = $1 WHERE group_key = $2 AND username = $3`
 	cmdTag, err := dbConnection.Exec(ctx, query, newRole, groupKey, username)
+	if err != nil {
+		return handleError(err)
+	}
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -327,9 +346,9 @@ func ChangeRole(ctx context.Context, groupKey string, username string, newRole s
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
 }
 
 func AddBattery(ctx context.Context, batteryInfo internal.Battery, requestingUser string) error {
@@ -337,17 +356,20 @@ func AddBattery(ctx context.Context, batteryInfo internal.Battery, requestingUse
 	          VALUES ($1, $2, $3, $4, $5, $6)`
 
 	_, err := dbConnection.Exec(ctx, query, batteryInfo.GroupKey, batteryInfo.Name, batteryInfo.Status, batteryInfo.MatchesUsed, batteryInfo.Notes, batteryInfo.Timestamp)
+	if err != nil {
+		return handleError(err)
+	}
 
 	log := internal.LogEntry{
 		GroupKey:       batteryInfo.GroupKey,
 		RequestingUser: requestingUser,
-		Action:         "ADD BATTERY",
+		Action:         "ADD BATTERY " + batteryInfo.Name,
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
 }
 
 func UpdateBattery(ctx context.Context, battery internal.Battery, requestingUser string) error {
@@ -358,6 +380,9 @@ func UpdateBattery(ctx context.Context, battery internal.Battery, requestingUser
 	`
 
 	cmdTag, err := dbConnection.Exec(ctx, query, battery.Status, battery.MatchesUsed, battery.Notes, battery.Timestamp, battery.GroupKey, battery.Name)
+	if err != nil {
+		return handleError(err)
+	}
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -365,18 +390,21 @@ func UpdateBattery(ctx context.Context, battery internal.Battery, requestingUser
 	log := internal.LogEntry{
 		GroupKey:       battery.GroupKey,
 		RequestingUser: requestingUser,
-		Action:         "UPDATE BATTERY",
+		Action:         "UPDATE BATTERY " + battery.Name,
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
 }
 
 func RemoveBattery(ctx context.Context, groupKey string, batteryName string, requestingUser string) error {
 	query := `DELETE FROM batteries WHERE group_key = $1 AND name = $2`
 	cmdTag, err := dbConnection.Exec(ctx, query, groupKey, batteryName)
+	if err != nil {
+		return handleError(err)
+	}
 	if cmdTag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -384,13 +412,19 @@ func RemoveBattery(ctx context.Context, groupKey string, batteryName string, req
 	log := internal.LogEntry{
 		GroupKey:       groupKey,
 		RequestingUser: requestingUser,
-		Action:         "REMOVE BATTERY",
+		Action:         "REMOVE BATTERY " + batteryName,
 		Timestamp:      time.Now(),
 	}
 
-	AddLogEntry(ctx, log)
+	recordLog(ctx, log)
 
-	return handleError(err)
+	return nil
+}
+
+func recordLog(ctx context.Context, entry internal.LogEntry) {
+	if err := AddLogEntry(ctx, entry); err != nil {
+		fmt.Println("failed to write log entry:", err)
+	}
 }
 
 func AddLogEntry(ctx context.Context, entry internal.LogEntry) error {
@@ -402,7 +436,7 @@ func AddLogEntry(ctx context.Context, entry internal.LogEntry) error {
 }
 
 func GetAllLogs(ctx context.Context, groupKey string) ([]*internal.LogEntry, error) {
-	query := `SELECT group_key, requesting_user, actioned_user, action, timestamp FROM logs WHERE group_key = $1`
+	query := `SELECT group_key, requesting_user, actioned_user, action, timestamp FROM logs WHERE group_key = $1 ORDER BY timestamp DESC LIMIT 200`
 	rows, err := dbConnection.Query(ctx, query, groupKey)
 	if err != nil {
 		return nil, handleError(err)
@@ -516,6 +550,15 @@ func GetAllMembers(ctx context.Context, groupKey string) ([]*internal.PublicMemb
 	}
 
 	return members, nil
+}
+
+func CountAdmins(ctx context.Context, groupKey string) (int, error) {
+	query := `SELECT COUNT(*) FROM members WHERE group_key = $1 AND is_admin = 1`
+	var count int
+	if err := dbConnection.QueryRow(ctx, query, groupKey).Scan(&count); err != nil {
+		return 0, handleError(err)
+	}
+	return count, nil
 }
 
 func GetMemberPinHash(ctx context.Context, groupKey string, username string) (string, error) {

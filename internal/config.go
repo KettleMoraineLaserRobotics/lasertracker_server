@@ -18,8 +18,9 @@ type config struct {
 	DatabaseURL  string
 	Port         int
 	TBAAPIKey    string
+	TBAAPIURL    string
 	JWTSecret    string
-	IsTesting    bool
+	TrustProxy   bool
 }
 
 func loadConfig() *config {
@@ -31,11 +32,11 @@ func loadConfig() *config {
 		port = 2077
 	}
 	tba := os.Getenv("LT_TBA_API_KEY")
-	testingStr := os.Getenv("LT_IS_TESTING")
-	testingBool := false
-	if testingStr == "true" {
-		testingBool = true
+	tbaURL := strings.TrimRight(os.Getenv("LT_TBA_API_URL"), "/")
+	if tbaURL == "" {
+		tbaURL = "https://www.thebluealliance.com/api/v3"
 	}
+	trustProxy := os.Getenv("LT_TRUST_PROXY") == "true"
 	jwt := loadJWTSecret()
 
 	var cfg config
@@ -44,8 +45,9 @@ func loadConfig() *config {
 	cfg.DatabaseURL = dbUrl
 	cfg.Port = port
 	cfg.TBAAPIKey = tba
+	cfg.TBAAPIURL = tbaURL
 	cfg.JWTSecret = jwt
-	cfg.IsTesting = testingBool
+	cfg.TrustProxy = trustProxy
 
 	return &cfg
 }
