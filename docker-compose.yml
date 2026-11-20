@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lasertracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-lasertracker}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy 
+      LT_DATABASE_URL: postgres://${POSTGRES_USER:-lasertracker}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-lasertracker}?sslmode=disable
+      LT_PORT: 2077
+      LT_TBA_API_KEY: ${LT_TBA_API_KEY:-}
+      LT_TBA_API_URL: ${LT_TBA_API_URL:-https://www.thebluealliance.com/api/v3}
+      LT_INSTANCE_NAME: ${LT_INSTANCE_NAME:-Laser Tracker}
+      LT_VERSION: ${LT_VERSION:-dev}
+      LT_TRUST_PROXY: ${LT_TRUST_PROXY:-false}
+    ports:
+      - "${LT_HOST_PORT:-2077}:2077"
+    volumes:
+      - secret:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  pgdata:
+  secret:

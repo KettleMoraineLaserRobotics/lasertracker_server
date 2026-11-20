@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -150,7 +152,8 @@ func CreateTables() error {
 func CreateGroup(ctx context.Context, groupInfo internal.Group, groupKey string, requestingUser string) error {
 	if groupKey == "" {
 		var err error
-		groupKey, err = internal.GenerateRandomSecret(6)
+		sec, err := internal.GenerateRandomSecret(3)
+		groupKey = strings.ToUpper(sec)
 		if err != nil {
 			return err
 		}
@@ -421,9 +424,15 @@ func RemoveBattery(ctx context.Context, groupKey string, batteryName string, req
 	return nil
 }
 
+var OnLogAdded func(entry internal.LogEntry)
+
 func recordLog(ctx context.Context, entry internal.LogEntry) {
 	if err := AddLogEntry(ctx, entry); err != nil {
 		fmt.Println("failed to write log entry:", err)
+		return
+	}
+	if OnLogAdded != nil {
+		OnLogAdded(entry)
 	}
 }
 
@@ -611,7 +620,7 @@ func GetTeamMatches(ctx context.Context, teamInt int, eventKey string) ([]*inter
 		var match internal.Match
 		var redTeamsJSON, blueTeamsJSON string
 
-		if err := rows.Scan(&match.EventKey, &match.MatchKey, &match.MatchNum, &redTeamsJSON, &blueTeamsJSON, &match.PredictedTime, &match.ActualTime); err != nil {
+		if err := rows.Scan(&match.EventKey, &match.MatchKey, &match.MatchNum, &redTeamsJSON, &blueTeamsJSON, &match.PredictedTime, &match.ActualTime, &match.CompLevel, &match.SetNumber); err != nil {
 			return nil, handleError(err)
 		}
 
@@ -752,13 +761,49 @@ func GetWebcasts(ctx context.Context, eventKey string) ([]internal.Stream, error
 	var casts []struct {
 		Type    string `json:"type"`
 		Channel string `json:"channel"`
+		Date    string `json:"date"`
 	}
 	if err := json.Unmarshal([]byte(webcastsJSON), &casts); err != nil {
 		return nil, fmt.Errorf("%w: bad webcasts_json for %s: %v", ErrDatabase, eventKey, err)
 	}
 
+	typeCount := map[string]int{}
+	for _, cast := range casts {
+		typeCount[cast.Type]++
+	}
+	typeSeen := map[string]int{}
+
+	dates := []string{}
+	for _, cast := range casts {
+		if cast.Date != "" && !slices.Contains(dates, cast.Date) {
+			dates = append(dates, cast.Date)
+		}
+	}
+	sort.Strings(dates)
+
+	perDay := map[string]int{}
+	for _, cast := range casts {
+		perDay[cast.Date]++
+	}
+	seenDay := map[string]int{}
+
 	streams := make([]internal.Stream, 0, len(casts))
 	for _, cast := range casts {
+		var name string
+		if cast.Date == "" {
+			name = prettyWebcastType(cast.Type)
+			if typeCount[cast.Type] > 1 {
+				typeSeen[cast.Type]++
+				name += " " + strconv.Itoa(typeSeen[cast.Type])
+			}
+		} else {
+			name = "Day " + strconv.Itoa(slices.Index(dates, cast.Date)+1)
+			if perDay[cast.Date] > 1 {
+				seenDay[cast.Date]++
+				name += " (" + strconv.Itoa(seenDay[cast.Date]) + ")"
+			}
+		}
+
 		streamURL := cast.Channel
 		switch cast.Type {
 		case "youtube":
@@ -766,10 +811,22 @@ func GetWebcasts(ctx context.Context, eventKey string) ([]internal.Stream, error
 		case "twitch":
 			streamURL = "https://player.twitch.tv/?channel=" + cast.Channel + "&parent=lasertracker.laserrobotics.org"
 		}
-		streams = append(streams, internal.Stream{Name: cast.Type, URL: streamURL, Type: cast.Channel})
+		streams = append(streams, internal.Stream{Name: name, URL: streamURL, Date: cast.Date, Type: cast.Type})
 	}
 
 	return streams, nil
+}
+
+func prettyWebcastType(t string) string {
+	switch t {
+	case "youtube":
+		return "YouTube"
+	case "twitch":
+		return "Twitch"
+	case "":
+		return "Stream"
+	}
+	return strings.ToUpper(t[:1]) + t[1:]
 }
 
 func GroupsAtEvent(ctx context.Context, eventKey string) ([]internal.GroupRef, error) {

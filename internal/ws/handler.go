@@ -172,7 +172,8 @@ func (c *Client) handleUpdateMember(ctx context.Context, hub *Hub, rawPayload js
 		}
 	}
 
-	if isSelf && payload.IsAdmin == false {
+	// Admins can't demote themselves. Only checks admins, otherwise every non-admin status update got blocked here
+	if isSelf && target.IsAdmin && !payload.IsAdmin {
 		return errForbidden
 	}
 

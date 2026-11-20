@@ -212,7 +212,8 @@ func createGroupHandler() http.HandlerFunc {
 			return
 		}
 
-		groupKey, gkerr := internal.GenerateRandomSecret(6)
+		sec, gkerr := internal.GenerateRandomSecret(3)
+		groupKey := strings.ToUpper(sec)
 		if gkerr != nil {
 			http.Error(w, "Error generating group key", http.StatusInternalServerError)
 			return
@@ -441,6 +442,7 @@ func InitHTTPServer(ctx context.Context, hub *ws.Hub) error {
 	http.HandleFunc("GET /tba/team/{number}", cors(tbaLimit.middleware(teamInfoHandler(tbaCache))))
 	http.HandleFunc("GET /tba/team/{number}/events", cors(tbaLimit.middleware(teamEventsHandler(tbaCache))))
 	http.HandleFunc("GET /ws", cors(wsHandler(hub)))
+	http.HandleFunc("OPTIONS /", cors(func(w http.ResponseWriter, r *http.Request) {}))
 
 	server := &http.Server{
 		Addr: ":" + port,

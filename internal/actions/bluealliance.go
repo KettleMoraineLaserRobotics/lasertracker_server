@@ -200,6 +200,7 @@ func parseMatches(data []byte) ([]internal.Match, error) {
 type tbaWebcast struct {
 	Type    string `json:"type"`
 	Channel string `json:"channel"`
+	Date    string `json:"date,omitempty"`
 }
 
 type tbaEvent struct {
