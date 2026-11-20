@@ -84,6 +84,8 @@ func pollOne(ctx context.Context, ev internal.TrackedEvent, b Broadcaster) {
 		}
 		if err := actions.SaveEventInfo(ctx, ev.EventKey, s, e, webcasts); err != nil {
 			log.Printf("Could not save event info for %s: %v", ev.EventKey, err)
+		} else if webcasts != ev.WebcastsJSON {
+			broadcastStreams(ctx, b, ev.EventKey)
 		}
 		markInfoFetched(ev.EventKey)
 		start, end = s, e
@@ -188,5 +190,22 @@ func broadcastMatches(ctx context.Context, b Broadcaster, eventKey string) {
 		}
 		payload, _ := json.Marshal(map[string]any{"event_key": eventKey, "matches": ms})
 		b.Broadcast(internal.Message{GroupKey: g.GroupKey, Timestamp: time.Now(), InfoType: "MATCHES_UPDATED", Payload: payload})
+	}
+}
+
+func broadcastStreams(ctx context.Context, b Broadcaster, eventKey string) {
+	streams, err := actions.GetWebcasts(ctx, eventKey)
+	if err != nil {
+		log.Printf("Could not load webcasts for %s: %v", eventKey, err)
+		return
+	}
+	groups, err := actions.GroupsAtEvent(ctx, eventKey)
+	if err != nil {
+		log.Printf("Could not list groups at %s: %v", eventKey, err)
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{"event_key": eventKey, "streams": streams})
+	for _, g := range groups {
+		b.Broadcast(internal.Message{GroupKey: g.GroupKey, Timestamp: time.Now(), InfoType: "STREAMS_UPDATED", Payload: payload})
 	}
 }

@@ -1,0 +1,10 @@
+.git
+.DS_Store
+.secret
+.env
+*.db
+main.py
+requirements.txt
+initdb.sql
+inbox
+wiki

@@ -287,10 +287,6 @@ $RECYCLE.BIN/
 *.pidb
 *.svclog
 *.scc
-
-# TFS 2012 Local Workspace
 $tf/
-
-
-# JWT signing secret generated on first run
 .secret
+.env
